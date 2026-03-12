@@ -52,7 +52,7 @@ function App() {
     onValue(ref(db, 'messages'), (snap) => {
       if (snap.exists()) setMessages(Object.values(snap.val()).reverse().slice(0, 20));
     });
-    fetch('/quiz.csv').then(res => res.text()).then(result => {
+    fetch('quiz.csv').then(res => res.text()).then(result => {
       Papa.parse(result, {
         header: true, skipEmptyLines: true,
         complete: (res) => {
