@@ -75,11 +75,12 @@ function App() {
         if (me) setUser(prev => ({ ...prev, totalScore: me.totalScore, hp: me.hp, wins: me.wins || 0, losses: me.losses || 0 }));
       }
     });
-    // 修正：增加 timestamp 排序確保最新留言在最下面
+
     onValue(ref(db, 'messages'), (snap) => {
       if (snap.exists()) {
         const msgs = Object.values(snap.val());
-        setMessages(msgs.slice(-20)); // 取最後 20 則
+        // 修正：保持原始順序，在渲染時才反轉，確保最新在最上面
+        setMessages(msgs); 
       }
     });
     
@@ -177,7 +178,6 @@ function App() {
       setGameOver(!!data.gameOver);
       if (data.roomQuestions && questions.length === 0) setQuestions(data.roomQuestions);
       
-      // 控制跳題時間，讓正確答案顯示 1.2 秒
       if (data.selections?.p1 && data.selections?.p2 && !data.gameOver && !isSwitching.current && myRole === 'p1') {
         isSwitching.current = true;
         setTimeout(() => {
@@ -237,10 +237,9 @@ function App() {
 
   const sendMessage = () => {
     if (!inputMsg.trim()) return;
-    // 修正：發送留言時加入 timestamp
     push(ref(db, 'messages'), { user: user.name, text: inputMsg, timestamp: Date.now() })
       .then(() => setInputMsg(""))
-      .catch(e => alert("發送失敗，請檢查 Firebase 權限！"));
+      .catch(e => alert("發送失敗！"));
   };
 
   if (loading) return <div style={{color:'white', textAlign:'center', marginTop:'50px'}}>載入中...</div>;
@@ -253,9 +252,16 @@ function App() {
         .box { background: #1e1e1e; padding: 20px; border-radius: 15px; border: 1px solid #333; margin-bottom: 10px; }
         .btn { padding: 12px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
         .quiz-title { font-size: 1.8rem; margin-bottom: 25px; color: #ffeb3b; font-weight: bold; }
-        .option-btn { padding: 20px; font-size: 1.2rem; border-radius: 12px; border: none; color: white; background: #333; margin-bottom: 10px; width: 100%; text-align: left; transition: 0.3s; }
+        .option-btn { padding: 20px; font-size: 1.2rem; border-radius: 12px; border: none; color: white; background: #333; margin-bottom: 10px; width: 100%; text-align: left; }
         header { position: sticky; top: 0; z-index: 1000; background: #1e1e1e; padding: 10px 15px; border-bottom: 2px solid #333; }
-        .msg-box { height: 250px; overflow-y: auto; background: #111; padding: 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #333; display: flex; flex-direction: column-reverse; }
+        .msg-box { height: 300px; overflow-y: auto; background: #111; padding: 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #333; display: flex; flex-direction: column; }
+        /* 排行榜表格樣式 */
+        .rank-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        .rank-table th { color: #888; border-bottom: 1px solid #444; padding: 5px; text-align: left; }
+        .rank-table td { padding: 8px 5px; border-bottom: 1px solid #222; }
+        /* 大廳排版 */
+        .lobby-layout { display: grid; grid-template-columns: 280px 1fr; gap: 20px; max-width: 1100px; margin: 0 auto; }
+        @media (max-width: 850px) { .lobby-layout { grid-template-columns: 1fr; } }
       `}</style>
 
       {view === "login" && (
@@ -273,41 +279,71 @@ function App() {
         <>
           <header>
              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-               <div>👤 <b>{user.name}</b> <span style={{color:'#ff5252', marginLeft:'10px'}}>❤️ {user.hp}</span> <span style={{color:'#ffeb3b', marginLeft:'10px'}}>💰 {user.totalScore}</span></div>
-               <button onClick={()=>window.location.reload()} className="btn" style={{background:'#555', color:'white', padding:'5px 12px'}}>登出</button>
+               <div>👤 <b>{user.name}</b> <span style={{color:'#ff5252', marginLeft:'15px'}}>❤️ {user.hp}</span> <span style={{color:'#ffeb3b', marginLeft:'15px'}}>💰 {user.totalScore}</span></div>
+               <div style={{display:'flex', gap:'10px'}}>
+                  <button onClick={exchangeHp} className="btn" style={{background:'#4caf50', color:'white', padding:'5px 12px', fontSize:'0.8rem'}}>+15分換血</button>
+                  <button onClick={()=>window.location.reload()} className="btn" style={{background:'#555', color:'white', padding:'5px 12px', fontSize:'0.8rem'}}>登出</button>
+               </div>
              </div>
           </header>
 
-          <main style={{ flex: 1, padding: '15px' }}>
+          <main style={{ flex: 1, padding: '20px' }}>
             {view === "lobby" && (
-              <div style={{maxWidth:'800px', margin:'0 auto'}}>
-                <div className="box" style={{textAlign:'center', border:'1px solid #ff5252'}}>
-                    <h3>🤖 AI 練習 (4 HP)</h3>
-                    <button className="btn" onClick={startAiGame} style={{background:'#ff5252', color:'white', width:'100%'}}>進入對戰</button>
+              <div className="lobby-layout">
+                {/* 1. 排行榜區塊 (找回來了!) */}
+                <div className="box" style={{ alignSelf: 'start' }}>
+                  <h3 style={{ color: '#ffeb3b', marginTop: 0, textAlign: 'center' }}>🏆 榮譽榜</h3>
+                  <table className="rank-table">
+                    <thead>
+                      <tr><th>姓名</th><th>積分</th><th>勝率</th></tr>
+                    </thead>
+                    <tbody>
+                      {leaderboard.map((u, i) => (
+                        <tr key={i}>
+                          <td>{i + 1}. {u.name}</td>
+                          <td style={{ color: '#4caf50' }}>{u.totalScore}</td>
+                          <td style={{ color: '#ffeb3b' }}>{calcWinRate(u.wins, u.losses)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                <div className="box">
-                  <h3 style={{textAlign:'center'}}>🎮 真人對戰桌 (2 HP)</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(85px, 1fr))', gap: '8px' }}>
-                    {Array.from({ length: 14 }).map((_, i) => (
-                      <div key={i} style={{position:'relative'}}>
-                        <button className="btn" onClick={() => handleJoinTable(i+1)} style={{background:'#2c2c2c', color:'white', border:'1px solid #444', width:'100%'}}>桌 {i+1}</button>
-                        <button onClick={() => resetTable(i+1)} style={{position:'absolute', top:'-5px', right:'-5px', background:'#444', borderRadius:'50%', border:'none', color:'white', width:'18px', height:'18px', fontSize:'9px'}}>🧹</button>
-                      </div>
-                    ))}
+
+                {/* 遊戲對戰與留言板區塊 */}
+                <div>
+                  <div className="box" style={{textAlign:'center', border:'1px solid #ff5252'}}>
+                      <h4 style={{margin: '0 0 10px 0'}}>🤖 AI 練習 (4 HP)</h4>
+                      <button className="btn" onClick={startAiGame} style={{background:'#ff5252', color:'white', width:'100%'}}>進入對戰</button>
                   </div>
-                </div>
-                
-                <div className="box">
-                   <h3 style={{marginTop:0}}>💬 班級留言板</h3>
-                   <div className="msg-box">
-                     {[...messages].reverse().map((m, i) => (
-                       <div key={i} style={{marginBottom:'8px'}}><b style={{color:'#4caf50'}}>{m.user}</b>: {m.text}</div>
-                     ))}
-                   </div>
-                   <div style={{display:'flex', gap:'5px'}}>
-                     <input value={inputMsg} onChange={e=>setInputMsg(e.target.value)} onKeyPress={e=>e.key==='Enter'&&sendMessage()} style={{flex:1, padding:'10px', borderRadius:'8px', background:'#333', border:'none', color:'white'}} placeholder="輸入留言..." />
-                     <button onClick={sendMessage} className="btn" style={{background:'#4caf50', color:'white'}}>發送</button>
-                   </div>
+                  
+                  <div className="box">
+                    <h4 style={{textAlign:'center', margin: '0 0 15px 0'}}>🎮 真人對戰桌 (2 HP)</h4>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))', gap: '8px' }}>
+                      {Array.from({ length: 14 }).map((_, i) => (
+                        <div key={i} style={{position:'relative'}}>
+                          <button className="btn" onClick={() => handleJoinTable(i+1)} style={{background:'#2c2c2c', color:'white', border:'1px solid #444', width:'100%', padding:'10px 5px'}}>桌 {i+1}</button>
+                          <button onClick={() => resetTable(i+1)} style={{position:'absolute', top:'-5px', right:'-5px', background:'#444', borderRadius:'50%', border:'none', color:'white', width:'18px', height:'18px', fontSize:'9px', cursor:'pointer'}}>🧹</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* 2. 留言板 (最新留言在最上面!) */}
+                  <div className="box">
+                     <h4 style={{marginTop:0}}>💬 班級留言板</h4>
+                     <div className="msg-box">
+                       {/* 使用 .slice().reverse() 讓最新的顯示在最上方 */}
+                       {messages.slice().reverse().map((m, i) => (
+                         <div key={i} style={{marginBottom:'8px', borderBottom: '1px solid #222', paddingBottom: '5px'}}>
+                           <b style={{color: m.user === user.name ? '#ffeb3b' : '#4caf50'}}>{m.user}</b>: {m.text}
+                         </div>
+                       ))}
+                     </div>
+                     <div style={{display:'flex', gap:'5px'}}>
+                       <input value={inputMsg} onChange={e=>setInputMsg(e.target.value)} onKeyPress={e=>e.key==='Enter'&&sendMessage()} style={{flex:1, padding:'12px', borderRadius:'8px', background:'#333', border:'none', color:'white'}} placeholder="輸入留言..." />
+                       <button onClick={sendMessage} className="btn" style={{background:'#4caf50', color:'white', padding: '0 20px'}}>發送</button>
+                     </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -315,10 +351,10 @@ function App() {
             {view === "game" && (
               <div style={{ maxWidth: '800px', margin: '0 auto' }}>
                 <div style={{textAlign:'center', marginBottom:'20px'}}>
-                  <div style={{fontSize:'3rem', fontWeight:'bold'}}>{timeLeft}s</div>
-                  <div style={{display:'flex', justifyContent:'space-around', background:'#1e1e1e', padding:'15px', borderRadius:'15px'}}>
+                  <div style={{fontSize:'3.5rem', fontWeight:'bold', color: timeLeft <= 5 ? '#ff5252' : 'white'}}>{timeLeft}s</div>
+                  <div style={{display:'flex', justifyContent:'space-around', background:'#1e1e1e', padding:'15px', borderRadius:'15px', border: '1px solid #444'}}>
                     <div><div style={{fontSize:'2rem', color:'#4caf50'}}>{p1Score}</div><small>{p1Name}</small></div>
-                    <div style={{fontSize:'2rem'}}>VS</div>
+                    <div style={{fontSize:'2rem', alignSelf: 'center'}}>VS</div>
                     <div><div style={{fontSize:'2rem', color:'#2196f3'}}>{p2Score}</div><small>{p2Name}</small></div>
                   </div>
                 </div>
@@ -328,11 +364,10 @@ function App() {
                     <div className="box">
                       <div className="quiz-title">Q{currentIdx + 1}: {questions[currentIdx].question}</div>
                       {questions[currentIdx].options.map((opt, i) => {
-                        // 🟢 判斷背景顏色：點選後顯示答案
                         let bg = '#333'; 
                         if (selections?.[myRole]) {
-                          if (opt.isCorrect) bg = '#2e7d32'; // 正確答案顯示綠色
-                          else if (selections[myRole].text === opt.text) bg = '#c62828'; // 選錯的顯示紅色
+                          if (opt.isCorrect) bg = '#2e7d32';
+                          else if (selections[myRole].text === opt.text) bg = '#c62828';
                         }
                         return (
                           <button key={i} onClick={() => onSelect(opt)} disabled={!!selections?.[myRole]} className="option-btn"
@@ -344,18 +379,22 @@ function App() {
                     </div>
                   )
                 ) : (
-                  <div style={{textAlign:'center', padding:'50px'}}>⏳ 等待對手加入...</div>
+                  <div className="box" style={{textAlign:'center', padding:'50px'}}>
+                    <h2>⏳ 等待對手加入...</h2>
+                    <p>請讓同學選擇同一桌進入遊戲</p>
+                  </div>
                 )}
               </div>
             )}
           </main>
 
           {gameOver && (
-            <div style={{ position:'fixed', top:0, left:0, width:'100%', height:'100%', background:'rgba(0,0,0,0.9)', display:'flex', flexDirection:'column', justifyContent:'center', alignItems:'center', zIndex:2000 }}>
-              <h1 style={{fontSize:'3.5rem', color: (myRole==='p1'?p1Score:p2Score) > (myRole==='p1'?p2Score:p1Score) ? '#ffeb3b' : '#ff5252'}}>
-                {(myRole==='p1'?p1Score:p2Score) > (myRole==='p1'?p2Score:p1Score) ? "勝利！" : "再接再厲"}
+            <div style={{ position:'fixed', top:0, left:0, width:'100%', height:'100%', background:'rgba(0,0,0,0.95)', display:'flex', flexDirection:'column', justifyContent:'center', alignItems:'center', zIndex:2000, padding:'20px', textAlign:'center' }}>
+              <h1 style={{fontSize:'4rem', color: (myRole==='p1'?p1Score:p2Score) > (myRole==='p1'?p2Score:p1Score) ? '#ffeb3b' : '#ff5252'}}>
+                {(myRole==='p1'?p1Score:p2Score) > (myRole==='p1'?p2Score:p1Score) ? "YOU WIN! 🎉" : "GAME OVER 💀"}
               </h1>
-              <button className="btn" onClick={finishGameAndGoLobby} style={{background:'#4caf50', color:'white', padding:'10px 40px'}}>領取獎勵並返回大廳</button>
+              <p style={{fontSize: '1.5rem'}}>最終得分：{myRole==='p1'?p1Score:p2Score}</p>
+              <button className="btn" onClick={finishGameAndGoLobby} style={{background:'#4caf50', color:'white', padding:'15px 50px', fontSize:'1.2rem', marginTop: '20px'}}>領取獎勵並返回大廳</button>
             </div>
           )}
         </>
