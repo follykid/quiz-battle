@@ -272,7 +272,8 @@ function App() {
         <>
           <header>
              <div style={{display:'flex', alignItems:'center', gap:'10px'}}>
-               <img src={`avatars/${user.id}.jpg`} className="avatar" onError={(e)=>e.target.src='https://via.placeholder.com/40'} />
+              // 尋找這一行並修改
+<img src={`${import.meta.env.BASE_URL}avatars/${user.id}.jpg`} className="avatar" onError={(e)=>e.target.src='https://via.placeholder.com/40'} />
                <b>{user.name}</b>
                <span style={{color:'#ff5252', marginLeft:'5px'}}>❤️ {user.hp}</span>
                <span style={{color:'#ffeb3b', marginLeft:'5px'}}>💰 {user.totalScore}</span>
@@ -297,7 +298,8 @@ function App() {
                       {leaderboard.map((u, i) => (
                         <tr key={i}>
                           <td>{i+1}</td>
-                          <td><img src={`avatars/${u.id}.jpg`} className="avatar" onError={(e)=>e.target.src='https://via.placeholder.com/40'} /></td>
+                          // 尋找這一行並修改
+<td><img src={`${import.meta.env.BASE_URL}avatars/${u.id}.jpg`} className="avatar" onError={(e)=>e.target.src='https://via.placeholder.com/40'} /></td>
                           <td>{u.name}</td>
                           <td style={{color:'#4caf50'}}>{u.totalScore}</td>
                           <td style={{color:'#ffeb3b'}}>{calcWinRate(u.wins, u.losses)}</td>
@@ -345,12 +347,12 @@ function App() {
                   <div style={{display:'flex', justifyContent:'space-around', alignItems:'center', background:'#1e1e1e', padding:'15px', borderRadius:'15px', border:'1px solid #444'}}>
                     <div>
                       {/* 3. 對戰大頭照修正：補回 ID 判斷 */}
-                      <img src={p1Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : `avatars/${p1Id}.jpg`} className="avatar-lg" onError={(e)=>e.target.src='https://via.placeholder.com/80'} />
+                     <img src={p1Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : `${import.meta.env.BASE_URL}avatars/${p1Id}.jpg`} className="avatar-lg" onError={(e)=>e.target.src='https://via.placeholder.com/80'} />
                       <div style={{fontSize:'1.5rem', color:'#4caf50'}}>{p1Score}</div><small>{p1Name}</small>
                     </div>
                     <div style={{fontSize:'2rem'}}>VS</div>
                     <div>
-                      <img src={p2Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : `avatars/${p2Id}.jpg`} className="avatar-lg" onError={(e)=>e.target.src='https://via.placeholder.com/80'} />
+                     <img src={p2Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : `${import.meta.env.BASE_URL}avatars/${p2Id}.jpg`} className="avatar-lg" onError={(e)=>e.target.src='https://via.placeholder.com/80'} />
                       <div style={{fontSize:'1.5rem', color:'#2196f3'}}>{p2Score}</div><small>{p2Name}</small>
                     </div>
                   </div>
