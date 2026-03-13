@@ -33,7 +33,7 @@ function App() {
 
   const isSwitching = useRef(false);
 
-  // 🎵 音效資源定義
+  // 🎵 音效資源
   const lobbyBgm = useRef(new Audio('sounds/lobby.mp3'));
   const gameBgm = useRef(new Audio('sounds/game.mp3'));
   const aiBgm = useRef(new Audio('sounds/ai.mp3'));
@@ -43,35 +43,22 @@ function App() {
   const loseSfx = useRef(new Audio('sounds/lose.mp3'));
 
   useEffect(() => {
-    // 設定循環播放
     [lobbyBgm, gameBgm, aiBgm].forEach(bgm => {
       bgm.current.loop = true;
       bgm.current.volume = 0.4;
     });
   }, []);
 
-  // 🎵 背景音樂控制邏輯
   useEffect(() => {
     if (!user) return;
-
-    // 先停止所有背景音樂
     const stopAllBgm = () => {
-      [lobbyBgm, gameBgm, aiBgm].forEach(bgm => {
-        bgm.current.pause();
-        bgm.current.currentTime = 0;
-      });
+      [lobbyBgm, gameBgm, aiBgm].forEach(bgm => { bgm.current.pause(); bgm.current.currentTime = 0; });
     };
-
     stopAllBgm();
-
-    if (view === "lobby") {
-      lobbyBgm.current.play().catch(e => {});
-    } else if (view === "game") {
-      if (isAiMode) {
-        aiBgm.current.play().catch(e => {});
-      } else {
-        gameBgm.current.play().catch(e => {});
-      }
+    if (view === "lobby") lobbyBgm.current.play().catch(e => {});
+    else if (view === "game") {
+      if (isAiMode) aiBgm.current.play().catch(e => {});
+      else gameBgm.current.play().catch(e => {});
     }
   }, [view, isAiMode, user]);
 
@@ -156,7 +143,7 @@ function App() {
       if (isInactive || roomData.gameOver || !roomData.p1) {
         await remove(roomRef);
         const shuffled = [...allQuestions].sort(() => 0.5 - Math.random()).slice(0, 10);
-        await set(roomRef, { p1: user.name, p1Id: user.id, p2: false, roomQuestions: shuffled, currentIdx: 0, scores: {p1:0, p2:0}, gameOver: false, lastActive: Date.now() });
+        await set(roomRef, { p1: user.name, p1Id: user.id, p2: false, p2Id: "", roomQuestions: shuffled, currentIdx: 0, scores: {p1:0, p2:0}, gameOver: false, lastActive: Date.now() });
         onDisconnect(roomRef).remove(); 
         await update(ref(db, `users/${user.id}`), { hp: increment(-2) });
         setQuestions(shuffled); setMyRole("p1"); setRoomId(tid); setIsAiMode(false); setView("game");
@@ -180,23 +167,15 @@ function App() {
       setP1Name(data.p1); setP1Id(data.p1Id); setP2Name(data.p2); setP2Id(data.p2Id); setP2Joined(!!data.p2);
       setSelections(data.selections || null); setCurrentIdx(data.currentIdx || 0);
       if (data.scores) { setP1Score(data.scores.p1 || 0); setP2Score(data.scores.p2 || 0); }
-      
-      // 🏁 遊戲結束時播放 win/lose 音效
       if (data.gameOver && !gameOver) {
         const myFinal = myRole === 'p1' ? data.scores.p1 : data.scores.p2;
         const oppFinal = myRole === 'p1' ? data.scores.p2 : data.scores.p1;
-        
-        [aiBgm, gameBgm].forEach(b => b.current.pause()); // 停止背景音樂
-        if (myFinal > oppFinal) {
-          winSfx.current.play().catch(e=>{});
-        } else {
-          loseSfx.current.play().catch(e=>{});
-        }
+        [aiBgm, gameBgm].forEach(b => b.current.pause());
+        if (myFinal > oppFinal) winSfx.current.play().catch(e=>{});
+        else loseSfx.current.play().catch(e=>{});
       }
       setGameOver(!!data.gameOver);
-
       if (data.roomQuestions && questions.length === 0) setQuestions(data.roomQuestions);
-      
       if (data.selections?.p1 && data.selections?.p2 && !data.gameOver && !isSwitching.current && myRole === 'p1') {
         isSwitching.current = true;
         setTimeout(() => {
@@ -224,16 +203,8 @@ function App() {
 
   const onSelect = (opt) => {
     if (selections?.[myRole] || (!p2Joined && !isAiMode) || gameOver) return;
-    
-    // 🔔 答題音效
-    if (opt.isCorrect) {
-      correctSfx.current.currentTime = 0;
-      correctSfx.current.play().catch(e=>{});
-    } else {
-      wrongSfx.current.currentTime = 0;
-      wrongSfx.current.play().catch(e=>{});
-    }
-
+    if (opt.isCorrect) { correctSfx.current.currentTime = 0; correctSfx.current.play().catch(e=>{}); }
+    else { wrongSfx.current.currentTime = 0; wrongSfx.current.play().catch(e=>{}); }
     let score = opt.isCorrect ? (timeLeft >= 13 ? 20 : 10) + Math.floor(timeLeft * 0.5) : 0;
     update(ref(db, `rooms/${roomId}`), { [`selections/${myRole}`]: { text: opt.text, isCorrect: opt.isCorrect }, [`scores/${myRole}`]: (myRole === 'p1' ? p1Score : p2Score) + score, lastActive: Date.now() });
   };
@@ -256,11 +227,7 @@ function App() {
     updates[`users/${user.id}/totalScore`] = increment(rewardPoints);
     await update(ref(db), updates);
     if (myRole === 'p1') await remove(ref(db, `rooms/${roomId}`)); 
-    
-    // 停止結算音效
-    winSfx.current.pause(); winSfx.current.currentTime = 0;
-    loseSfx.current.pause(); loseSfx.current.currentTime = 0;
-
+    winSfx.current.pause(); winSfx.current.currentTime = 0; loseSfx.current.pause(); loseSfx.current.currentTime = 0;
     setRoomId(""); setGameOver(false); setView("lobby");
   };
 
@@ -274,19 +241,20 @@ function App() {
   return (
     <div className="safe-container">
       <style>{`
-        html, body { background: #121212; margin: 0; padding: 0; font-family: sans-serif; }
+        html, body { background: #121212; margin: 0; padding: 0; font-family: sans-serif; overflow-x: hidden; }
         .safe-container { min-height: 100vh; color: white; display: flex; flex-direction: column; }
         .box { background: #1e1e1e; padding: 20px; border-radius: 15px; border: 1px solid #333; margin-bottom: 10px; }
         .btn { padding: 12px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
         .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #444; }
-        .avatar-lg { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid #ffeb3b; }
-        .rank-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        .avatar-lg { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid #ffeb3b; background: #333; }
+        .rank-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        .rank-table th { text-align: left; color: #888; border-bottom: 1px solid #444; padding: 5px; }
         .rank-table td { padding: 8px 5px; border-bottom: 1px solid #222; vertical-align: middle; }
-        .lobby-layout { display: grid; grid-template-columns: 300px 1fr; gap: 20px; max-width: 1200px; margin: 0 auto; width: 100%; box-sizing: border-box; padding: 10px; }
+        .lobby-layout { display: grid; grid-template-columns: 320px 1fr; gap: 20px; max-width: 1200px; margin: 0 auto; width: 100%; box-sizing: border-box; padding: 10px; }
         @media (max-width: 850px) { .lobby-layout { grid-template-columns: 1fr; } }
-        .option-btn { padding: 20px; font-size: 1.2rem; border-radius: 12px; border: none; color: white; background: #333; margin-bottom: 10px; width: 100%; text-align: left; cursor: pointer;}
+        .option-btn { padding: 18px; font-size: 1.1rem; border-radius: 12px; border: none; color: white; background: #333; margin-bottom: 10px; width: 100%; text-align: left; cursor: pointer; }
         header { position: sticky; top: 0; z-index: 1000; background: #1e1e1e; padding: 10px 15px; border-bottom: 2px solid #333; display: flex; justify-content: space-between; align-items: center; }
-        .msg-box { height: 300px; overflow-y: auto; background: #111; padding: 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #333; display: flex; flex-direction: column-reverse; }
+        .msg-box { height: 300px; overflow-y: auto; background: #111; padding: 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #333; display: flex; flex-direction: column; }
       `}</style>
 
       {view === "login" && (
@@ -295,7 +263,7 @@ function App() {
           <div className="box" style={{ maxWidth: '320px', margin: '0 auto' }}>
             <input placeholder="學號" value={loginId} onChange={e=>setLoginId(e.target.value)} style={{width:'100%', padding:'12px', marginBottom:'15px', background:'#111', color:'white', border:'1px solid #444', borderRadius:'8px', boxSizing:'border-box'}} />
             <input type="password" placeholder="密碼" value={loginPwd} onChange={e=>setLoginPwd(e.target.value)} style={{width:'100%', padding:'12px', marginBottom:'25px', background:'#111', color:'white', border:'1px solid #444', borderRadius:'8px', boxSizing:'border-box'}} />
-            <button className="btn" onClick={handleLogin} style={{width:'100%', background:'#4caf50', color:'white'}}>登入並開啟音效</button>
+            <button className="btn" onClick={handleLogin} style={{width:'100%', background:'#4caf50', color:'white'}}>登入</button>
           </div>
         </div>
       )}
@@ -310,7 +278,7 @@ function App() {
                <span style={{color:'#ffeb3b', marginLeft:'5px'}}>💰 {user.totalScore}</span>
              </div>
              <div style={{display:'flex', gap:'8px'}}>
-               <button onClick={exchangeHp} className="btn" style={{background:'#4caf50', color:'white', padding:'5px 10px', fontSize:'0.8rem'}}>換血</button>
+               <button onClick={exchangeHp} className="btn" style={{background:'#4caf50', color:'white', padding:'5px 10px', fontSize:'0.8rem'}}>+1HP(15分)</button>
                <button onClick={()=>window.location.reload()} className="btn" style={{background:'#555', color:'white', padding:'5px 10px', fontSize:'0.8rem'}}>登出</button>
              </div>
           </header>
@@ -318,15 +286,21 @@ function App() {
           <main style={{ flex: 1 }}>
             {view === "lobby" && (
               <div className="lobby-layout">
-                <div className="box">
+                {/* 1. 排行榜修正：加入 積分 與 勝率 */}
+                <div className="box" style={{alignSelf: 'start'}}>
                   <h3 style={{ color: '#ffeb3b', textAlign: 'center', marginTop:0 }}>🏆 榮譽榜</h3>
                   <table className="rank-table">
+                    <thead>
+                      <tr><th>#</th><th>頭像</th><th>姓名</th><th>積分</th><th>勝率</th></tr>
+                    </thead>
                     <tbody>
                       {leaderboard.map((u, i) => (
                         <tr key={i}>
-                          <td width="30">{i+1}</td>
-                          <td width="50"><img src={`avatars/${u.id}.jpg`} className="avatar" onError={(e)=>e.target.src='https://via.placeholder.com/40'} /></td>
-                          <td>{u.name}<br/><small style={{color:'#4caf50'}}>{u.totalScore} pts</small></td>
+                          <td>{i+1}</td>
+                          <td><img src={`avatars/${u.id}.jpg`} className="avatar" onError={(e)=>e.target.src='https://via.placeholder.com/40'} /></td>
+                          <td>{u.name}</td>
+                          <td style={{color:'#4caf50'}}>{u.totalScore}</td>
+                          <td style={{color:'#ffeb3b'}}>{calcWinRate(u.wins, u.losses)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -345,15 +319,18 @@ function App() {
                       ))}
                     </div>
                   </div>
+                  {/* 2. 留言板修正：最新留言置頂 */}
                   <div className="box">
-                     <h4 style={{marginTop:0}}>💬 班級留言板</h4>
+                     <h4 style={{marginTop:0}}>💬 留言板 (最新在上方)</h4>
                      <div className="msg-box">
                        {messages.slice().reverse().map((m, i) => (
-                         <div key={i} style={{marginBottom:'8px'}}><b style={{color:'#4caf50'}}>{m.user}</b>: {m.text}</div>
+                         <div key={i} style={{marginBottom:'8px', borderBottom: '1px solid #222', paddingBottom: '4px'}}>
+                           <b style={{color:'#4caf50'}}>{m.user}</b>: {m.text}
+                         </div>
                        ))}
                      </div>
                      <div style={{display:'flex', gap:'5px'}}>
-                       <input value={inputMsg} onChange={e=>setInputMsg(e.target.value)} onKeyPress={e=>e.key==='Enter'&&sendMessage()} style={{flex:1, padding:'10px', borderRadius:'8px', background:'#333', border:'none', color:'white'}} placeholder="聊天..." />
+                       <input value={inputMsg} onChange={e=>setInputMsg(e.target.value)} onKeyPress={e=>e.key==='Enter'&&sendMessage()} style={{flex:1, padding:'10px', borderRadius:'8px', background:'#333', border:'none', color:'white'}} placeholder="輸入聊天..." />
                        <button onClick={sendMessage} className="btn" style={{background:'#4caf50', color:'white'}}>發送</button>
                      </div>
                   </div>
@@ -367,6 +344,7 @@ function App() {
                   <div style={{fontSize:'3rem', fontWeight:'bold'}}>{timeLeft}s</div>
                   <div style={{display:'flex', justifyContent:'space-around', alignItems:'center', background:'#1e1e1e', padding:'15px', borderRadius:'15px', border:'1px solid #444'}}>
                     <div>
+                      {/* 3. 對戰大頭照修正：補回 ID 判斷 */}
                       <img src={p1Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : `avatars/${p1Id}.jpg`} className="avatar-lg" onError={(e)=>e.target.src='https://via.placeholder.com/80'} />
                       <div style={{fontSize:'1.5rem', color:'#4caf50'}}>{p1Score}</div><small>{p1Name}</small>
                     </div>
@@ -399,7 +377,6 @@ function App() {
               <h1 style={{fontSize:'4rem', color: (myRole==='p1'?p1Score:p2Score) > (myRole==='p1'?p2Score:p1Score) ? '#ffeb3b' : '#ff5252'}}>
                 {(myRole==='p1'?p1Score:p2Score) > (myRole==='p1'?p2Score:p1Score) ? "VICTORY! 🎉" : "DEFEAT... 💀"}
               </h1>
-              <p style={{fontSize:'1.5rem'}}>最終得分：{myRole==='p1'?p1Score:p2Score}</p>
               <button className="btn" onClick={finishGameAndGoLobby} style={{background:'#4caf50', color:'white', padding:'15px 50px', fontSize:'1.2rem', marginTop:'20px'}}>返回大廳領取獎勵</button>
             </div>
           )}
