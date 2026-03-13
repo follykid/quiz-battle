@@ -30,9 +30,39 @@ function App() {
   const [p2Name, setP2Name] = useState("");
 
   const isSwitching = useRef(false);
-  // 修正 1：移除開頭斜線，解決 GitHub Pages 路徑問題
+
+  // 🎵 音效與背景音樂設定 (已修正 GitHub Pages 相對路徑)
   const correctSfx = useRef(new Audio('sounds/correct.mp3'));
   const wrongSfx = useRef(new Audio('sounds/wrong.mp3'));
+  const lobbyBgm = useRef(new Audio('sounds/lobby.mp3'));
+  const battleBgm = useRef(new Audio('sounds/battle.mp3'));
+
+  // 設定 BGM 循環播放
+  useEffect(() => {
+    lobbyBgm.current.loop = true;
+    battleBgm.current.loop = true;
+    // 降低背景音樂音量，避免蓋過答題音效
+    lobbyBgm.current.volume = 0.4;
+    battleBgm.current.volume = 0.5;
+  }, []);
+
+  // 🎮 控制背景音樂切換
+  useEffect(() => {
+    if (!user) return;
+
+    if (view === "lobby") {
+      battleBgm.current.pause();
+      battleBgm.current.currentTime = 0;
+      lobbyBgm.current.play().catch(e => console.log("等待使用者互動後播放 BGM"));
+    } else if (view === "game") {
+      lobbyBgm.current.pause();
+      lobbyBgm.current.currentTime = 0;
+      battleBgm.current.play().catch(e => console.log("等待使用者互動後播放 BGM"));
+    } else {
+      lobbyBgm.current.pause();
+      battleBgm.current.pause();
+    }
+  }, [view, user]);
 
   const calcWinRate = (w = 0, l = 0) => {
     const total = (w || 0) + (l || 0);
@@ -54,7 +84,6 @@ function App() {
       if (snap.exists()) setMessages(Object.values(snap.val()).reverse().slice(0, 20));
     });
     
-    // 修正 2：改為相對路徑，確保抓得到 csv
     fetch('quiz.csv').then(res => res.text()).then(result => {
       Papa.parse(result, {
         header: true, skipEmptyLines: true,
@@ -100,12 +129,10 @@ function App() {
   };
 
   const startAiGame = async () => {
-    // 修正 3：Number(user.hp) 確保數值正確
     if (Number(user.hp) < 4) return alert("HP 不足 4 點！");
     const tid = `AI_${user.id}_${Date.now()}`;
     const roomRef = ref(db, `rooms/${tid}`);
     
-    // 修正 4：加強隨機洗牌邏輯
     const shuffled = [...allQuestions]
       .sort(() => 0.5 - Math.random())
       .sort(() => 0.5 - Math.random())
@@ -189,7 +216,13 @@ function App() {
 
   const onSelect = (opt) => {
     if (selections?.[myRole] || (!p2Joined && !isAiMode) || gameOver) return;
-    if (opt.isCorrect) correctSfx.current.play(); else wrongSfx.current.play();
+    if (opt.isCorrect) {
+      correctSfx.current.currentTime = 0;
+      correctSfx.current.play();
+    } else {
+      wrongSfx.current.currentTime = 0;
+      wrongSfx.current.play();
+    }
     let score = opt.isCorrect ? (timeLeft >= 13 ? 20 : 10) + Math.floor(timeLeft * 0.5) : 0;
     update(ref(db, `rooms/${roomId}`), { [`selections/${myRole}`]: { text: opt.text, isCorrect: opt.isCorrect }, [`scores/${myRole}`]: (myRole === 'p1' ? p1Score : p2Score) + score, lastActive: Date.now() });
   };
