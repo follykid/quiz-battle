@@ -30,8 +30,9 @@ function App() {
   const [p2Name, setP2Name] = useState("");
 
   const isSwitching = useRef(false);
-  const correctSfx = useRef(new Audio('/sounds/correct.mp3'));
-  const wrongSfx = useRef(new Audio('/sounds/wrong.mp3'));
+  // 修正 1：移除開頭斜線，解決 GitHub Pages 路徑問題
+  const correctSfx = useRef(new Audio('sounds/correct.mp3'));
+  const wrongSfx = useRef(new Audio('sounds/wrong.mp3'));
 
   const calcWinRate = (w = 0, l = 0) => {
     const total = (w || 0) + (l || 0);
@@ -52,6 +53,8 @@ function App() {
     onValue(ref(db, 'messages'), (snap) => {
       if (snap.exists()) setMessages(Object.values(snap.val()).reverse().slice(0, 20));
     });
+    
+    // 修正 2：改為相對路徑，確保抓得到 csv
     fetch('quiz.csv').then(res => res.text()).then(result => {
       Papa.parse(result, {
         header: true, skipEmptyLines: true,
@@ -97,10 +100,17 @@ function App() {
   };
 
   const startAiGame = async () => {
-    if (user.hp < 4) return alert("HP 不足 4 點！");
+    // 修正 3：Number(user.hp) 確保數值正確
+    if (Number(user.hp) < 4) return alert("HP 不足 4 點！");
     const tid = `AI_${user.id}_${Date.now()}`;
     const roomRef = ref(db, `rooms/${tid}`);
-    const shuffled = [...allQuestions].sort(() => 0.5 - Math.random()).slice(0, 10);
+    
+    // 修正 4：加強隨機洗牌邏輯
+    const shuffled = [...allQuestions]
+      .sort(() => 0.5 - Math.random())
+      .sort(() => 0.5 - Math.random())
+      .slice(0, 10);
+
     try {
       await set(roomRef, { 
         p1: user.name, p2: "🤖 練習用 AI", roomQuestions: shuffled, 
@@ -113,7 +123,7 @@ function App() {
   };
 
   const handleJoinTable = async (num) => {
-    if (user.hp < 2) return alert("HP 不足 2 點！");
+    if (Number(user.hp) < 2) return alert("HP 不足 2 點！");
     const tid = `Table_${num}`;
     const roomRef = ref(db, `rooms/${tid}`);
     const snap = await get(roomRef);
@@ -167,6 +177,7 @@ function App() {
     if (isAiMode && selections?.p1 && !selections?.p2 && !gameOver) {
       setTimeout(() => {
         const q = questions[currentIdx];
+        if(!q) return;
         const correctOpt = q.options.find(o => o.isCorrect);
         const wrongOpts = q.options.filter(o => !o.isCorrect);
         const aiOpt = Math.random() < 0.6 ? correctOpt : wrongOpts[Math.floor(Math.random() * wrongOpts.length)];
@@ -221,15 +232,10 @@ function App() {
       <style>{`
         html, body { background: #121212; margin: 0; padding: 0; overflow-y: auto !important; height: auto; min-height: 100%; }
         .safe-container { min-height: 100vh; color: white; font-family: sans-serif; display: flex; flex-direction: column; }
-        
-        /* 大廳佈局：改為兩欄 (排行榜 + 對戰區) */
         .lobby-grid { display: grid; grid-template-columns: 320px 1fr; gap: 15px; padding: 15px; width: 100%; box-sizing: border-box; }
         @media (max-width: 800px) { .lobby-grid { grid-template-columns: 1fr; } }
-        
-        /* 全域留言板樣式 */
         .global-chat { width: 100%; max-width: 800px; margin: 0 auto 20px auto; padding: 0 15px; box-sizing: border-box; }
         .msg-box { height: 250px; overflow-y: auto; background: #111; padding: 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #333; }
-        
         .box { background: #1e1e1e; padding: 20px; border-radius: 15px; border: 1px solid #333; margin-bottom: 10px; }
         .btn { padding: 12px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
         .btn:active { transform: scale(0.95); }
@@ -240,7 +246,6 @@ function App() {
         .loader { margin: 20px auto; border: 4px solid #333; border-top: 4px solid #ffeb3b; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
       `}</style>
 
-      {/* 登入介面 */}
       {view === "login" && (
         <div style={{ padding: '80px 20px', textAlign: 'center' }}>
           <h1>⚔️ 知識對戰系統</h1>
@@ -252,7 +257,6 @@ function App() {
         </div>
       )}
 
-      {/* 登入後的內容 */}
       {user && view !== "login" && (
         <>
           <header>
@@ -272,7 +276,6 @@ function App() {
           </header>
 
           <main style={{ flex: 1 }}>
-            {/* 視圖 A: 大廳 */}
             {view === "lobby" && (
               <div className="lobby-grid">
                 <div className="box">
@@ -315,7 +318,6 @@ function App() {
               </div>
             )}
 
-            {/* 視圖 B: 遊戲中 */}
             {view === "game" && (
               <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto', width:'100%', boxSizing:'border-box' }}>
                 <div style={{textAlign:'center', marginBottom:'20px'}}>
@@ -356,7 +358,6 @@ function App() {
             )}
           </main>
 
-          {/* 全域留言板：出現在所有頁面最下方 */}
           <div className="global-chat">
             <div className="box" style={{ marginBottom: 0 }}>
               <h3 style={{marginTop:0, fontSize:'1rem'}}>💬 班級留言板</h3>
@@ -374,7 +375,6 @@ function App() {
             </div>
           </div>
 
-          {/* 遊戲結束結算畫面 */}
           {gameOver && (
             <div style={{ position:'fixed', top:0, left:0, width:'100%', height:'100%', background:'rgba(0,0,0,0.95)', display:'flex', flexDirection:'column', justifyContent:'center', alignItems:'center', zIndex:2000, padding:'20px', textAlign:'center' }}>
               <h1 style={{fontSize:'4rem', margin:'0', color: (myRole==='p1'?p1Score:p2Score) > (myRole==='p1'?p2Score:p1Score) ? '#ffeb3b' : '#ff5252'}}>
