@@ -79,7 +79,6 @@ function App() {
     onValue(ref(db, 'messages'), (snap) => {
       if (snap.exists()) {
         const msgs = Object.values(snap.val());
-        // 修正：保持原始順序，在渲染時才反轉，確保最新在最上面
         setMessages(msgs); 
       }
     });
@@ -218,18 +217,28 @@ function App() {
     return () => clearInterval(timer);
   }, [currentIdx, gameOver, p2Joined, isAiMode, selections]);
 
+  // ⭐ 主要規則修改區
   const finishGameAndGoLobby = async () => {
     const myScore = myRole === 'p1' ? p1Score : p2Score;
     const oppScore = myRole === 'p1' ? p2Score : p1Score;
     const isWin = myScore > oppScore;
     const updates = {};
-    if (isAiMode) { if (isWin) updates[`users/${user.id}/totalScore`] = increment(Math.floor(myScore * 0.4)); } 
-    else {
-      updates[`users/${user.id}/totalScore`] = increment(myScore + (isWin ? 20 : 5));
-      updates[`users/${user.id}/hp`] = increment(isWin ? 5 : -1);
+    
+    let rewardPoints = 0;
+    if (isAiMode) {
+      // AI 模式：贏了打 5 折 (0.5)，輸了打 3 折 (0.3)
+      rewardPoints = isWin ? Math.floor(myScore * 0.5) : Math.floor(myScore * 0.3);
+    } else {
+      // 真人模式：贏了拿 100% (1.0)，輸了打 8 折 (0.8)
+      rewardPoints = isWin ? myScore : Math.floor(myScore * 0.8);
+      // 真人對戰勝利加 5 HP (鼓勵性質)
+      if (isWin) updates[`users/${user.id}/hp`] = increment(5);
+      
       updates[`users/${user.id}/wins`] = increment(isWin ? 1 : 0);
       updates[`users/${user.id}/losses`] = increment(isWin ? 0 : 1);
     }
+    
+    updates[`users/${user.id}/totalScore`] = increment(rewardPoints);
     await update(ref(db), updates);
     if (myRole === 'p1') await remove(ref(db, `rooms/${roomId}`)); 
     setRoomId(""); setGameOver(false); setView("lobby");
@@ -255,11 +264,9 @@ function App() {
         .option-btn { padding: 20px; font-size: 1.2rem; border-radius: 12px; border: none; color: white; background: #333; margin-bottom: 10px; width: 100%; text-align: left; }
         header { position: sticky; top: 0; z-index: 1000; background: #1e1e1e; padding: 10px 15px; border-bottom: 2px solid #333; }
         .msg-box { height: 300px; overflow-y: auto; background: #111; padding: 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #333; display: flex; flex-direction: column; }
-        /* 排行榜表格樣式 */
         .rank-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
         .rank-table th { color: #888; border-bottom: 1px solid #444; padding: 5px; text-align: left; }
         .rank-table td { padding: 8px 5px; border-bottom: 1px solid #222; }
-        /* 大廳排版 */
         .lobby-layout { display: grid; grid-template-columns: 280px 1fr; gap: 20px; max-width: 1100px; margin: 0 auto; }
         @media (max-width: 850px) { .lobby-layout { grid-template-columns: 1fr; } }
       `}</style>
@@ -290,7 +297,6 @@ function App() {
           <main style={{ flex: 1, padding: '20px' }}>
             {view === "lobby" && (
               <div className="lobby-layout">
-                {/* 1. 排行榜區塊 (找回來了!) */}
                 <div className="box" style={{ alignSelf: 'start' }}>
                   <h3 style={{ color: '#ffeb3b', marginTop: 0, textAlign: 'center' }}>🏆 榮譽榜</h3>
                   <table className="rank-table">
@@ -309,7 +315,6 @@ function App() {
                   </table>
                 </div>
 
-                {/* 遊戲對戰與留言板區塊 */}
                 <div>
                   <div className="box" style={{textAlign:'center', border:'1px solid #ff5252'}}>
                       <h4 style={{margin: '0 0 10px 0'}}>🤖 AI 練習 (4 HP)</h4>
@@ -328,11 +333,9 @@ function App() {
                     </div>
                   </div>
                   
-                  {/* 2. 留言板 (最新留言在最上面!) */}
                   <div className="box">
                      <h4 style={{marginTop:0}}>💬 班級留言板</h4>
                      <div className="msg-box">
-                       {/* 使用 .slice().reverse() 讓最新的顯示在最上方 */}
                        {messages.slice().reverse().map((m, i) => (
                          <div key={i} style={{marginBottom:'8px', borderBottom: '1px solid #222', paddingBottom: '5px'}}>
                            <b style={{color: m.user === user.name ? '#ffeb3b' : '#4caf50'}}>{m.user}</b>: {m.text}
@@ -393,7 +396,7 @@ function App() {
               <h1 style={{fontSize:'4rem', color: (myRole==='p1'?p1Score:p2Score) > (myRole==='p1'?p2Score:p1Score) ? '#ffeb3b' : '#ff5252'}}>
                 {(myRole==='p1'?p1Score:p2Score) > (myRole==='p1'?p2Score:p1Score) ? "YOU WIN! 🎉" : "GAME OVER 💀"}
               </h1>
-              <p style={{fontSize: '1.5rem'}}>最終得分：{myRole==='p1'?p1Score:p2Score}</p>
+              <p style={{fontSize: '1.5rem'}}>本次對戰得分：{myRole==='p1'?p1Score:p2Score}</p>
               <button className="btn" onClick={finishGameAndGoLobby} style={{background:'#4caf50', color:'white', padding:'15px 50px', fontSize:'1.2rem', marginTop: '20px'}}>領取獎勵並返回大廳</button>
             </div>
           )}
