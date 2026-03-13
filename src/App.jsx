@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Papa from 'papaparse'; 
 import { db } from './firebase'; 
-import { ref, onValue, update, set, get, push, serverTimestamp, increment, remove, onDisconnect } from "firebase/database";
+import { ref, onValue, update, set, get, push, increment, remove, onDisconnect } from "firebase/database";
 import { STUDENTS } from './students'; 
 
 function App() {
@@ -32,15 +32,16 @@ function App() {
   const [p2Id, setP2Id] = useState("");
 
   const isSwitching = useRef(false);
+  const BASE = import.meta.env.BASE_URL; // 自動取得 /quiz-battle/ 路徑
 
   // 🎵 音效資源
-  const lobbyBgm = useRef(new Audio('sounds/lobby.mp3'));
-  const gameBgm = useRef(new Audio('sounds/game.mp3'));
-  const aiBgm = useRef(new Audio('sounds/ai.mp3'));
-  const correctSfx = useRef(new Audio('sounds/correct.mp3'));
-  const wrongSfx = useRef(new Audio('sounds/wrong.mp3'));
-  const winSfx = useRef(new Audio('sounds/win.mp3'));
-  const loseSfx = useRef(new Audio('sounds/lose.mp3'));
+  const lobbyBgm = useRef(new Audio(`${BASE}sounds/lobby.mp3`));
+  const gameBgm = useRef(new Audio(`${BASE}sounds/game.mp3`));
+  const aiBgm = useRef(new Audio(`${BASE}sounds/ai.mp3`));
+  const correctSfx = useRef(new Audio(`${BASE}sounds/correct.mp3`));
+  const wrongSfx = useRef(new Audio(`${BASE}sounds/wrong.mp3`));
+  const winSfx = useRef(new Audio(`${BASE}sounds/win.mp3`));
+  const loseSfx = useRef(new Audio(`${BASE}sounds/lose.mp3`));
 
   useEffect(() => {
     [lobbyBgm, gameBgm, aiBgm].forEach(bgm => {
@@ -51,14 +52,12 @@ function App() {
 
   useEffect(() => {
     if (!user) return;
-    const stopAllBgm = () => {
-      [lobbyBgm, gameBgm, aiBgm].forEach(bgm => { bgm.current.pause(); bgm.current.currentTime = 0; });
-    };
-    stopAllBgm();
-    if (view === "lobby") lobbyBgm.current.play().catch(e => {});
+    const stopAll = () => [lobbyBgm, gameBgm, aiBgm].forEach(b => { b.current.pause(); b.current.currentTime = 0; });
+    stopAll();
+    if (view === "lobby") lobbyBgm.current.play().catch(() => {});
     else if (view === "game") {
-      if (isAiMode) aiBgm.current.play().catch(e => {});
-      else gameBgm.current.play().catch(e => {});
+      if (isAiMode) aiBgm.current.play().catch(() => {});
+      else gameBgm.current.play().catch(() => {});
     }
   }, [view, isAiMode, user]);
 
@@ -75,7 +74,7 @@ function App() {
       setLeaderboard(list);
       if (user?.id && !user.isTeacher) {
         const me = val[user.id];
-        if (me) setUser(prev => ({ ...prev, totalScore: me.totalScore, hp: me.hp, wins: me.wins || 0, losses: me.losses || 0 }));
+        if (me) setUser(prev => ({ ...prev, ...me }));
       }
     });
 
@@ -83,7 +82,7 @@ function App() {
       if (snap.exists()) setMessages(Object.values(snap.val()));
     });
     
-    fetch('quiz.csv').then(res => res.text()).then(result => {
+    fetch(`${BASE}quiz.csv`).then(res => res.text()).then(result => {
       Papa.parse(result, {
         header: true, skipEmptyLines: true,
         complete: (res) => {
@@ -110,26 +109,17 @@ function App() {
     const snap = await get(userRef);
     let userData = snap.exists() ? snap.val() : { name: student.name, totalScore: 0, hp: 20, wins: 0, losses: 0 };
     if (!snap.exists()) await set(userRef, userData);
-    setUser({ id: loginId, ...userData, isTeacher: false });
+    setUser({ id: loginId, ...userData });
     setView("lobby");
-  };
-
-  const exchangeHp = async () => {
-    if (user.totalScore < 15) return alert("積分不足 15 分！");
-    const userRef = ref(db, `users/${user.id}`);
-    await update(userRef, { totalScore: increment(-15), hp: increment(1) });
-    alert("兌換成功！HP +1");
   };
 
   const startAiGame = async () => {
     if (Number(user.hp) < 4) return alert("HP 不足 4 點！");
     const tid = `AI_${user.id}_${Date.now()}`;
     const shuffled = [...allQuestions].sort(() => 0.5 - Math.random()).slice(0, 10);
-    try {
-      await set(ref(db, `rooms/${tid}`), { p1: user.name, p1Id: user.id, p2: "🤖 練習用 AI", p2Id: "ai", roomQuestions: shuffled, currentIdx: 0, scores: {p1:0, p2:0}, gameOver: false, lastActive: Date.now() });
-      await update(ref(db, `users/${user.id}`), { hp: increment(-4) });
-      setQuestions(shuffled); setMyRole("p1"); setRoomId(tid); setIsAiMode(true); setP2Joined(true); setP2Name("🤖 練習用 AI"); setP2Id("ai"); setView("game");
-    } catch(e) { alert("進入失敗"); }
+    await set(ref(db, `rooms/${tid}`), { p1: user.name, p1Id: user.id, p2: "🤖 練習用 AI", p2Id: "ai", roomQuestions: shuffled, currentIdx: 0, scores: {p1:0, p2:0}, gameOver: false, lastActive: Date.now() });
+    await update(ref(db, `users/${user.id}`), { hp: increment(-4) });
+    setQuestions(shuffled); setMyRole("p1"); setRoomId(tid); setIsAiMode(true); setP2Joined(true); setP2Name("🤖 練習用 AI"); setP2Id("ai"); setView("game");
   };
 
   const handleJoinTable = async (num) => {
@@ -139,22 +129,20 @@ function App() {
     const snap = await get(roomRef);
     const roomData = snap.val();
     const isInactive = !roomData || (Date.now() - (roomData.lastActive || 0) > 30000);
-    try {
-      if (isInactive || roomData.gameOver || !roomData.p1) {
-        await remove(roomRef);
-        const shuffled = [...allQuestions].sort(() => 0.5 - Math.random()).slice(0, 10);
-        await set(roomRef, { p1: user.name, p1Id: user.id, p2: false, p2Id: "", roomQuestions: shuffled, currentIdx: 0, scores: {p1:0, p2:0}, gameOver: false, lastActive: Date.now() });
-        onDisconnect(roomRef).remove(); 
-        await update(ref(db, `users/${user.id}`), { hp: increment(-2) });
-        setQuestions(shuffled); setMyRole("p1"); setRoomId(tid); setIsAiMode(false); setView("game");
-      } else {
-        if (roomData.p1 === user.name) return alert("你已在房內");
-        if (roomData.p2) return alert("此房間已滿");
-        await update(roomRef, { p2: user.name, p2Id: user.id, lastActive: Date.now() });
-        await update(ref(db, `users/${user.id}`), { hp: increment(-2) });
-        setMyRole("p2"); setRoomId(tid); setQuestions(roomData.roomQuestions); setIsAiMode(false); setView("game");
-      }
-    } catch(e) { alert("進入失敗"); }
+    if (isInactive || roomData.gameOver || !roomData.p1) {
+      await remove(roomRef);
+      const shuffled = [...allQuestions].sort(() => 0.5 - Math.random()).slice(0, 10);
+      await set(roomRef, { p1: user.name, p1Id: user.id, p2: false, roomQuestions: shuffled, currentIdx: 0, scores: {p1:0, p2:0}, gameOver: false, lastActive: Date.now() });
+      onDisconnect(roomRef).remove(); 
+      await update(ref(db, `users/${user.id}`), { hp: increment(-2) });
+      setQuestions(shuffled); setMyRole("p1"); setRoomId(tid); setIsAiMode(false); setView("game");
+    } else {
+      if (roomData.p1 === user.name) return alert("你已在房內");
+      if (roomData.p2) return alert("此房間已滿");
+      await update(roomRef, { p2: user.name, p2Id: user.id, lastActive: Date.now() });
+      await update(ref(db, `users/${user.id}`), { hp: increment(-2) });
+      setMyRole("p2"); setRoomId(tid); setQuestions(roomData.roomQuestions); setIsAiMode(false); setView("game");
+    }
   };
 
   useEffect(() => {
@@ -164,15 +152,15 @@ function App() {
       const data = snap.val();
       if (!data) return;
       if (myRole === 'p1') update(roomRef, { lastActive: Date.now() });
-      setP1Name(data.p1); setP1Id(data.p1Id); setP2Name(data.p2); setP2Id(data.p2Id); setP2Joined(!!data.p2);
+      setP1Name(data.p1); setP1Id(data.p1Id); setP2Name(data.p2 || "等待中..."); setP2Id(data.p2Id || ""); setP2Joined(!!data.p2);
       setSelections(data.selections || null); setCurrentIdx(data.currentIdx || 0);
       if (data.scores) { setP1Score(data.scores.p1 || 0); setP2Score(data.scores.p2 || 0); }
       if (data.gameOver && !gameOver) {
         const myFinal = myRole === 'p1' ? data.scores.p1 : data.scores.p2;
         const oppFinal = myRole === 'p1' ? data.scores.p2 : data.scores.p1;
         [aiBgm, gameBgm].forEach(b => b.current.pause());
-        if (myFinal > oppFinal) winSfx.current.play().catch(e=>{});
-        else loseSfx.current.play().catch(e=>{});
+        if (myFinal > oppFinal) winSfx.current.play().catch(()=>{});
+        else loseSfx.current.play().catch(()=>{});
       }
       setGameOver(!!data.gameOver);
       if (data.roomQuestions && questions.length === 0) setQuestions(data.roomQuestions);
@@ -189,6 +177,14 @@ function App() {
     });
   }, [roomId, myRole, gameOver]);
 
+  const onSelect = (opt) => {
+    if (selections?.[myRole] || (!p2Joined && !isAiMode) || gameOver) return;
+    if (opt.isCorrect) { correctSfx.current.currentTime = 0; correctSfx.current.play().catch(()=>{}); }
+    else { wrongSfx.current.currentTime = 0; wrongSfx.current.play().catch(()=>{}); }
+    let score = opt.isCorrect ? (timeLeft >= 13 ? 20 : 10) + Math.floor(timeLeft * 0.5) : 0;
+    update(ref(db, `rooms/${roomId}`), { [`selections/${myRole}`]: { text: opt.text, isCorrect: opt.isCorrect }, [`scores/${myRole}`]: (myRole === 'p1' ? p1Score : p2Score) + score, lastActive: Date.now() });
+  };
+
   useEffect(() => {
     if (isAiMode && selections?.p1 && !selections?.p2 && !gameOver) {
       setTimeout(() => {
@@ -200,14 +196,6 @@ function App() {
       }, 800);
     }
   }, [selections, isAiMode]);
-
-  const onSelect = (opt) => {
-    if (selections?.[myRole] || (!p2Joined && !isAiMode) || gameOver) return;
-    if (opt.isCorrect) { correctSfx.current.currentTime = 0; correctSfx.current.play().catch(e=>{}); }
-    else { wrongSfx.current.currentTime = 0; wrongSfx.current.play().catch(e=>{}); }
-    let score = opt.isCorrect ? (timeLeft >= 13 ? 20 : 10) + Math.floor(timeLeft * 0.5) : 0;
-    update(ref(db, `rooms/${roomId}`), { [`selections/${myRole}`]: { text: opt.text, isCorrect: opt.isCorrect }, [`scores/${myRole}`]: (myRole === 'p1' ? p1Score : p2Score) + score, lastActive: Date.now() });
-  };
 
   useEffect(() => { if ((p2Joined || isAiMode) && !gameOver) setTimeLeft(15); }, [currentIdx, p2Joined, isAiMode, gameOver]);
   useEffect(() => {
@@ -227,13 +215,8 @@ function App() {
     updates[`users/${user.id}/totalScore`] = increment(rewardPoints);
     await update(ref(db), updates);
     if (myRole === 'p1') await remove(ref(db, `rooms/${roomId}`)); 
-    winSfx.current.pause(); winSfx.current.currentTime = 0; loseSfx.current.pause(); loseSfx.current.currentTime = 0;
+    [winSfx, loseSfx].forEach(s => { s.current.pause(); s.current.currentTime = 0; });
     setRoomId(""); setGameOver(false); setView("lobby");
-  };
-
-  const sendMessage = () => {
-    if (!inputMsg.trim()) return;
-    push(ref(db, 'messages'), { user: user.name, text: inputMsg, timestamp: Date.now() }).then(() => setInputMsg(""));
   };
 
   if (loading) return <div style={{color:'white', textAlign:'center', marginTop:'50px'}}>載入中...</div>;
@@ -241,20 +224,19 @@ function App() {
   return (
     <div className="safe-container">
       <style>{`
-        html, body { background: #121212; margin: 0; padding: 0; font-family: sans-serif; overflow-x: hidden; }
-        .safe-container { min-height: 100vh; color: white; display: flex; flex-direction: column; }
+        html, body { background: #121212; margin: 0; padding: 0; font-family: sans-serif; color: white; }
         .box { background: #1e1e1e; padding: 20px; border-radius: 15px; border: 1px solid #333; margin-bottom: 10px; }
-        .btn { padding: 12px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
-        .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #444; }
+        .btn { padding: 12px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; }
+        .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #444; background: #333; }
         .avatar-lg { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid #ffeb3b; background: #333; }
         .rank-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
         .rank-table th { text-align: left; color: #888; border-bottom: 1px solid #444; padding: 5px; }
-        .rank-table td { padding: 8px 5px; border-bottom: 1px solid #222; vertical-align: middle; }
-        .lobby-layout { display: grid; grid-template-columns: 320px 1fr; gap: 20px; max-width: 1200px; margin: 0 auto; width: 100%; box-sizing: border-box; padding: 10px; }
+        .rank-table td { padding: 8px 5px; border-bottom: 1px solid #222; }
+        .lobby-layout { display: grid; grid-template-columns: 320px 1fr; gap: 20px; max-width: 1200px; margin: 0 auto; padding: 10px; }
         @media (max-width: 850px) { .lobby-layout { grid-template-columns: 1fr; } }
-        .option-btn { padding: 18px; font-size: 1.1rem; border-radius: 12px; border: none; color: white; background: #333; margin-bottom: 10px; width: 100%; text-align: left; cursor: pointer; }
         header { position: sticky; top: 0; z-index: 1000; background: #1e1e1e; padding: 10px 15px; border-bottom: 2px solid #333; display: flex; justify-content: space-between; align-items: center; }
         .msg-box { height: 300px; overflow-y: auto; background: #111; padding: 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #333; display: flex; flex-direction: column; }
+        .option-btn { padding: 18px; font-size: 1.1rem; border-radius: 12px; border: none; color: white; background: #333; margin-bottom: 10px; width: 100%; text-align: left; cursor: pointer; }
       `}</style>
 
       {view === "login" && (
@@ -272,34 +254,29 @@ function App() {
         <>
           <header>
              <div style={{display:'flex', alignItems:'center', gap:'10px'}}>
-              // 尋找這一行並修改
-<img src={`${import.meta.env.BASE_URL}avatars/${user.id}.jpg`} className="avatar" onError={(e)=>e.target.src='https://via.placeholder.com/40'} />
+               <img src={`${BASE}avatars/${user.id}.jpg`} className="avatar" onError={(e)=>e.target.src='https://via.placeholder.com/40'} />
                <b>{user.name}</b>
                <span style={{color:'#ff5252', marginLeft:'5px'}}>❤️ {user.hp}</span>
                <span style={{color:'#ffeb3b', marginLeft:'5px'}}>💰 {user.totalScore}</span>
              </div>
              <div style={{display:'flex', gap:'8px'}}>
-               <button onClick={exchangeHp} className="btn" style={{background:'#4caf50', color:'white', padding:'5px 10px', fontSize:'0.8rem'}}>+1HP(15分)</button>
+               <button onClick={async()=>{ if(user.totalScore<15)return alert("積分不足"); await update(ref(db, `users/${user.id}`), {totalScore:increment(-15), hp:increment(1)}); alert("兌換成功"); }} className="btn" style={{background:'#4caf50', color:'white', padding:'5px 10px', fontSize:'0.8rem'}}>+1HP(15分)</button>
                <button onClick={()=>window.location.reload()} className="btn" style={{background:'#555', color:'white', padding:'5px 10px', fontSize:'0.8rem'}}>登出</button>
              </div>
           </header>
 
-          <main style={{ flex: 1 }}>
+          <main style={{ flex: 1, paddingTop: '20px' }}>
             {view === "lobby" && (
               <div className="lobby-layout">
-                {/* 1. 排行榜修正：加入 積分 與 勝率 */}
-                <div className="box" style={{alignSelf: 'start'}}>
+                <div className="box">
                   <h3 style={{ color: '#ffeb3b', textAlign: 'center', marginTop:0 }}>🏆 榮譽榜</h3>
                   <table className="rank-table">
-                    <thead>
-                      <tr><th>#</th><th>頭像</th><th>姓名</th><th>積分</th><th>勝率</th></tr>
-                    </thead>
+                    <thead><tr><th>#</th><th>頭像</th><th>姓名</th><th>積分</th><th>勝率</th></tr></thead>
                     <tbody>
                       {leaderboard.map((u, i) => (
                         <tr key={i}>
                           <td>{i+1}</td>
-                          // 尋找這一行並修改
-<td><img src={`${import.meta.env.BASE_URL}avatars/${u.id}.jpg`} className="avatar" onError={(e)=>e.target.src='https://via.placeholder.com/40'} /></td>
+                          <td><img src={`${BASE}avatars/${u.id}.jpg`} className="avatar" onError={(e)=>e.target.src='https://via.placeholder.com/40'} /></td>
                           <td>{u.name}</td>
                           <td style={{color:'#4caf50'}}>{u.totalScore}</td>
                           <td style={{color:'#ffeb3b'}}>{calcWinRate(u.wins, u.losses)}</td>
@@ -321,19 +298,16 @@ function App() {
                       ))}
                     </div>
                   </div>
-                  {/* 2. 留言板修正：最新留言置頂 */}
                   <div className="box">
                      <h4 style={{marginTop:0}}>💬 留言板 (最新在上方)</h4>
                      <div className="msg-box">
                        {messages.slice().reverse().map((m, i) => (
-                         <div key={i} style={{marginBottom:'8px', borderBottom: '1px solid #222', paddingBottom: '4px'}}>
-                           <b style={{color:'#4caf50'}}>{m.user}</b>: {m.text}
-                         </div>
+                         <div key={i} style={{marginBottom:'8px', borderBottom: '1px solid #222', paddingBottom: '4px'}}><b style={{color:'#4caf50'}}>{m.user}</b>: {m.text}</div>
                        ))}
                      </div>
                      <div style={{display:'flex', gap:'5px'}}>
-                       <input value={inputMsg} onChange={e=>setInputMsg(e.target.value)} onKeyPress={e=>e.key==='Enter'&&sendMessage()} style={{flex:1, padding:'10px', borderRadius:'8px', background:'#333', border:'none', color:'white'}} placeholder="輸入聊天..." />
-                       <button onClick={sendMessage} className="btn" style={{background:'#4caf50', color:'white'}}>發送</button>
+                       <input value={inputMsg} onChange={e=>setInputMsg(e.target.value)} onKeyPress={e=>e.key==='Enter'&&(async()=>{if(!inputMsg.trim())return; await push(ref(db,'messages'),{user:user.name, text:inputMsg, timestamp:Date.now()}); setInputMsg("");})()} style={{flex:1, padding:'10px', borderRadius:'8px', background:'#333', border:'none', color:'white'}} placeholder="輸入聊天..." />
+                       <button onClick={async()=>{if(!inputMsg.trim())return; await push(ref(db,'messages'),{user:user.name, text:inputMsg, timestamp:Date.now()}); setInputMsg("");}} className="btn" style={{background:'#4caf50', color:'white'}}>發送</button>
                      </div>
                   </div>
                 </div>
@@ -346,13 +320,12 @@ function App() {
                   <div style={{fontSize:'3rem', fontWeight:'bold'}}>{timeLeft}s</div>
                   <div style={{display:'flex', justifyContent:'space-around', alignItems:'center', background:'#1e1e1e', padding:'15px', borderRadius:'15px', border:'1px solid #444'}}>
                     <div>
-                      {/* 3. 對戰大頭照修正：補回 ID 判斷 */}
-                     <img src={p1Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : `${import.meta.env.BASE_URL}avatars/${p1Id}.jpg`} className="avatar-lg" onError={(e)=>e.target.src='https://via.placeholder.com/80'} />
+                      <img src={p1Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : `${BASE}avatars/${p1Id}.jpg`} className="avatar-lg" onError={(e)=>e.target.src='https://via.placeholder.com/80'} />
                       <div style={{fontSize:'1.5rem', color:'#4caf50'}}>{p1Score}</div><small>{p1Name}</small>
                     </div>
                     <div style={{fontSize:'2rem'}}>VS</div>
                     <div>
-                     <img src={p2Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : `${import.meta.env.BASE_URL}avatars/${p2Id}.jpg`} className="avatar-lg" onError={(e)=>e.target.src='https://via.placeholder.com/80'} />
+                      <img src={p2Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : `${BASE}avatars/${p2Id}.jpg`} className="avatar-lg" onError={(e)=>e.target.src='https://via.placeholder.com/80'} />
                       <div style={{fontSize:'1.5rem', color:'#2196f3'}}>{p2Score}</div><small>{p2Name}</small>
                     </div>
                   </div>
@@ -360,7 +333,7 @@ function App() {
                 {(p2Joined || isAiMode) ? (
                   questions[currentIdx] && (
                     <div className="box">
-                      <div className="quiz-title">Q{currentIdx + 1}: {questions[currentIdx].question}</div>
+                      <div style={{fontSize:'1.2rem', marginBottom:'15px'}}>Q{currentIdx + 1}: {questions[currentIdx].question}</div>
                       {questions[currentIdx].options.map((opt, i) => (
                         <button key={i} onClick={() => onSelect(opt)} disabled={!!selections?.[myRole]} className="option-btn"
                           style={{ background: selections?.[myRole] ? (opt.isCorrect ? '#2e7d32' : (selections[myRole].text === opt.text ? '#c62828' : '#333')) : '#333' }}>
@@ -375,11 +348,11 @@ function App() {
           </main>
 
           {gameOver && (
-            <div style={{ position:'fixed', top:0, left:0, width:'100%', height:'100%', background:'rgba(0,0,0,0.95)', display:'flex', flexDirection:'column', justifyContent:'center', alignItems:'center', zIndex:2000, textAlign:'center' }}>
+            <div style={{ position:'fixed', top:0, left:0, width:'100%', height:'100%', background:'rgba(0,0,0,0.95)', display:'flex', flexDirection:'column', justifyContent:'center', alignItems:'center', zIndex:2000 }}>
               <h1 style={{fontSize:'4rem', color: (myRole==='p1'?p1Score:p2Score) > (myRole==='p1'?p2Score:p1Score) ? '#ffeb3b' : '#ff5252'}}>
                 {(myRole==='p1'?p1Score:p2Score) > (myRole==='p1'?p2Score:p1Score) ? "VICTORY! 🎉" : "DEFEAT... 💀"}
               </h1>
-              <button className="btn" onClick={finishGameAndGoLobby} style={{background:'#4caf50', color:'white', padding:'15px 50px', fontSize:'1.2rem', marginTop:'20px'}}>返回大廳領取獎勵</button>
+              <button className="btn" onClick={finishGameAndGoLobby} style={{background:'#4caf50', color:'white', padding:'15px 50px', fontSize:'1.2rem'}}>返回大廳</button>
             </div>
           )}
         </>
