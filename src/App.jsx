@@ -28,39 +28,52 @@ function App() {
   const [p2Score, setP2Score] = useState(0);
   const [p1Name, setP1Name] = useState("");
   const [p2Name, setP2Name] = useState("");
-  // 新增：儲存對手學號以便顯示頭像
   const [p1Id, setP1Id] = useState("");
   const [p2Id, setP2Id] = useState("");
 
   const isSwitching = useRef(false);
 
+  // 🎵 音效資源定義
+  const lobbyBgm = useRef(new Audio('sounds/lobby.mp3'));
+  const gameBgm = useRef(new Audio('sounds/game.mp3'));
+  const aiBgm = useRef(new Audio('sounds/ai.mp3'));
   const correctSfx = useRef(new Audio('sounds/correct.mp3'));
   const wrongSfx = useRef(new Audio('sounds/wrong.mp3'));
-  const lobbyBgm = useRef(new Audio('sounds/lobby.mp3'));
-  const battleBgm = useRef(new Audio('sounds/battle.mp3'));
+  const winSfx = useRef(new Audio('sounds/win.mp3'));
+  const loseSfx = useRef(new Audio('sounds/lose.mp3'));
 
   useEffect(() => {
-    lobbyBgm.current.loop = true;
-    battleBgm.current.loop = true;
-    lobbyBgm.current.volume = 0.4;
-    battleBgm.current.volume = 0.5;
+    // 設定循環播放
+    [lobbyBgm, gameBgm, aiBgm].forEach(bgm => {
+      bgm.current.loop = true;
+      bgm.current.volume = 0.4;
+    });
   }, []);
 
+  // 🎵 背景音樂控制邏輯
   useEffect(() => {
     if (!user) return;
+
+    // 先停止所有背景音樂
+    const stopAllBgm = () => {
+      [lobbyBgm, gameBgm, aiBgm].forEach(bgm => {
+        bgm.current.pause();
+        bgm.current.currentTime = 0;
+      });
+    };
+
+    stopAllBgm();
+
     if (view === "lobby") {
-      battleBgm.current.pause();
-      battleBgm.current.currentTime = 0;
       lobbyBgm.current.play().catch(e => {});
     } else if (view === "game") {
-      lobbyBgm.current.pause();
-      lobbyBgm.current.currentTime = 0;
-      battleBgm.current.play().catch(e => {});
-    } else {
-      lobbyBgm.current.pause();
-      battleBgm.current.pause();
+      if (isAiMode) {
+        aiBgm.current.play().catch(e => {});
+      } else {
+        gameBgm.current.play().catch(e => {});
+      }
     }
-  }, [view, user]);
+  }, [view, isAiMode, user]);
 
   const calcWinRate = (w = 0, l = 0) => {
     const total = (w || 0) + (l || 0);
@@ -80,10 +93,7 @@ function App() {
     });
 
     onValue(ref(db, 'messages'), (snap) => {
-      if (snap.exists()) {
-        const msgs = Object.values(snap.val());
-        setMessages(msgs); 
-      }
+      if (snap.exists()) setMessages(Object.values(snap.val()));
     });
     
     fetch('quiz.csv').then(res => res.text()).then(result => {
@@ -124,22 +134,15 @@ function App() {
     alert("兌換成功！HP +1");
   };
 
-  const resetTable = async (num) => {
-    if(window.confirm(`確定要清空「桌 ${num}」嗎？`)) {
-      await remove(ref(db, `rooms/Table_${num}`));
-    }
-  };
-
   const startAiGame = async () => {
     if (Number(user.hp) < 4) return alert("HP 不足 4 點！");
     const tid = `AI_${user.id}_${Date.now()}`;
-    const roomRef = ref(db, `rooms/${tid}`);
     const shuffled = [...allQuestions].sort(() => 0.5 - Math.random()).slice(0, 10);
     try {
-      await set(roomRef, { p1: user.name, p1Id: user.id, p2: "🤖 練習用 AI", p2Id: "ai", roomQuestions: shuffled, currentIdx: 0, scores: {p1:0, p2:0}, gameOver: false, lastActive: Date.now() });
+      await set(ref(db, `rooms/${tid}`), { p1: user.name, p1Id: user.id, p2: "🤖 練習用 AI", p2Id: "ai", roomQuestions: shuffled, currentIdx: 0, scores: {p1:0, p2:0}, gameOver: false, lastActive: Date.now() });
       await update(ref(db, `users/${user.id}`), { hp: increment(-4) });
       setQuestions(shuffled); setMyRole("p1"); setRoomId(tid); setIsAiMode(true); setP2Joined(true); setP2Name("🤖 練習用 AI"); setP2Id("ai"); setView("game");
-    } catch(e) { alert("連線失敗"); }
+    } catch(e) { alert("進入失敗"); }
   };
 
   const handleJoinTable = async (num) => {
@@ -177,7 +180,21 @@ function App() {
       setP1Name(data.p1); setP1Id(data.p1Id); setP2Name(data.p2); setP2Id(data.p2Id); setP2Joined(!!data.p2);
       setSelections(data.selections || null); setCurrentIdx(data.currentIdx || 0);
       if (data.scores) { setP1Score(data.scores.p1 || 0); setP2Score(data.scores.p2 || 0); }
+      
+      // 🏁 遊戲結束時播放 win/lose 音效
+      if (data.gameOver && !gameOver) {
+        const myFinal = myRole === 'p1' ? data.scores.p1 : data.scores.p2;
+        const oppFinal = myRole === 'p1' ? data.scores.p2 : data.scores.p1;
+        
+        [aiBgm, gameBgm].forEach(b => b.current.pause()); // 停止背景音樂
+        if (myFinal > oppFinal) {
+          winSfx.current.play().catch(e=>{});
+        } else {
+          loseSfx.current.play().catch(e=>{});
+        }
+      }
       setGameOver(!!data.gameOver);
+
       if (data.roomQuestions && questions.length === 0) setQuestions(data.roomQuestions);
       
       if (data.selections?.p1 && data.selections?.p2 && !data.gameOver && !isSwitching.current && myRole === 'p1') {
@@ -191,7 +208,7 @@ function App() {
         }, 1200); 
       }
     });
-  }, [roomId, myRole]);
+  }, [roomId, myRole, gameOver]);
 
   useEffect(() => {
     if (isAiMode && selections?.p1 && !selections?.p2 && !gameOver) {
@@ -207,8 +224,16 @@ function App() {
 
   const onSelect = (opt) => {
     if (selections?.[myRole] || (!p2Joined && !isAiMode) || gameOver) return;
-    if (opt.isCorrect) { correctSfx.current.currentTime = 0; correctSfx.current.play(); } 
-    else { wrongSfx.current.currentTime = 0; wrongSfx.current.play(); }
+    
+    // 🔔 答題音效
+    if (opt.isCorrect) {
+      correctSfx.current.currentTime = 0;
+      correctSfx.current.play().catch(e=>{});
+    } else {
+      wrongSfx.current.currentTime = 0;
+      wrongSfx.current.play().catch(e=>{});
+    }
+
     let score = opt.isCorrect ? (timeLeft >= 13 ? 20 : 10) + Math.floor(timeLeft * 0.5) : 0;
     update(ref(db, `rooms/${roomId}`), { [`selections/${myRole}`]: { text: opt.text, isCorrect: opt.isCorrect }, [`scores/${myRole}`]: (myRole === 'p1' ? p1Score : p2Score) + score, lastActive: Date.now() });
   };
@@ -231,6 +256,11 @@ function App() {
     updates[`users/${user.id}/totalScore`] = increment(rewardPoints);
     await update(ref(db), updates);
     if (myRole === 'p1') await remove(ref(db, `rooms/${roomId}`)); 
+    
+    // 停止結算音效
+    winSfx.current.pause(); winSfx.current.currentTime = 0;
+    loseSfx.current.pause(); loseSfx.current.currentTime = 0;
+
     setRoomId(""); setGameOver(false); setView("lobby");
   };
 
@@ -254,9 +284,9 @@ function App() {
         .rank-table td { padding: 8px 5px; border-bottom: 1px solid #222; vertical-align: middle; }
         .lobby-layout { display: grid; grid-template-columns: 300px 1fr; gap: 20px; max-width: 1200px; margin: 0 auto; width: 100%; box-sizing: border-box; padding: 10px; }
         @media (max-width: 850px) { .lobby-layout { grid-template-columns: 1fr; } }
-        .option-btn { padding: 20px; font-size: 1.2rem; border-radius: 12px; border: none; color: white; background: #333; margin-bottom: 10px; width: 100%; text-align: left; }
+        .option-btn { padding: 20px; font-size: 1.2rem; border-radius: 12px; border: none; color: white; background: #333; margin-bottom: 10px; width: 100%; text-align: left; cursor: pointer;}
         header { position: sticky; top: 0; z-index: 1000; background: #1e1e1e; padding: 10px 15px; border-bottom: 2px solid #333; display: flex; justify-content: space-between; align-items: center; }
-        .msg-box { height: 300px; overflow-y: auto; background: #111; padding: 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #333; }
+        .msg-box { height: 300px; overflow-y: auto; background: #111; padding: 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #333; display: flex; flex-direction: column-reverse; }
       `}</style>
 
       {view === "login" && (
@@ -265,7 +295,7 @@ function App() {
           <div className="box" style={{ maxWidth: '320px', margin: '0 auto' }}>
             <input placeholder="學號" value={loginId} onChange={e=>setLoginId(e.target.value)} style={{width:'100%', padding:'12px', marginBottom:'15px', background:'#111', color:'white', border:'1px solid #444', borderRadius:'8px', boxSizing:'border-box'}} />
             <input type="password" placeholder="密碼" value={loginPwd} onChange={e=>setLoginPwd(e.target.value)} style={{width:'100%', padding:'12px', marginBottom:'25px', background:'#111', color:'white', border:'1px solid #444', borderRadius:'8px', boxSizing:'border-box'}} />
-            <button className="btn" onClick={handleLogin} style={{width:'100%', background:'#4caf50', color:'white'}}>登入</button>
+            <button className="btn" onClick={handleLogin} style={{width:'100%', background:'#4caf50', color:'white'}}>登入並開啟音效</button>
           </div>
         </div>
       )}
@@ -335,7 +365,7 @@ function App() {
               <div style={{ maxWidth: '800px', margin: '0 auto', padding:'10px' }}>
                 <div style={{textAlign:'center', marginBottom:'20px'}}>
                   <div style={{fontSize:'3rem', fontWeight:'bold'}}>{timeLeft}s</div>
-                  <div style={{display:'flex', justifyContent:'space-around', alignItems:'center', background:'#1e1e1e', padding:'15px', borderRadius:'15px'}}>
+                  <div style={{display:'flex', justifyContent:'space-around', alignItems:'center', background:'#1e1e1e', padding:'15px', borderRadius:'15px', border:'1px solid #444'}}>
                     <div>
                       <img src={p1Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : `avatars/${p1Id}.jpg`} className="avatar-lg" onError={(e)=>e.target.src='https://via.placeholder.com/80'} />
                       <div style={{fontSize:'1.5rem', color:'#4caf50'}}>{p1Score}</div><small>{p1Name}</small>
@@ -359,17 +389,18 @@ function App() {
                       ))}
                     </div>
                   )
-                ) : <div style={{textAlign:'center', padding:'50px'}}>⏳ 等待對手...</div>}
+                ) : <div style={{textAlign:'center', padding:'50px'}}>⏳ 等待對手加入...</div>}
               </div>
             )}
           </main>
 
           {gameOver && (
             <div style={{ position:'fixed', top:0, left:0, width:'100%', height:'100%', background:'rgba(0,0,0,0.95)', display:'flex', flexDirection:'column', justifyContent:'center', alignItems:'center', zIndex:2000, textAlign:'center' }}>
-              <h1 style={{fontSize:'3.5rem', color: (myRole==='p1'?p1Score:p2Score) > (myRole==='p1'?p2Score:p1Score) ? '#ffeb3b' : '#ff5252'}}>
-                {(myRole==='p1'?p1Score:p2Score) > (myRole==='p1'?p2Score:p1Score) ? "YOU WIN! 🎉" : "GAME OVER 💀"}
+              <h1 style={{fontSize:'4rem', color: (myRole==='p1'?p1Score:p2Score) > (myRole==='p1'?p2Score:p1Score) ? '#ffeb3b' : '#ff5252'}}>
+                {(myRole==='p1'?p1Score:p2Score) > (myRole==='p1'?p2Score:p1Score) ? "VICTORY! 🎉" : "DEFEAT... 💀"}
               </h1>
-              <button className="btn" onClick={finishGameAndGoLobby} style={{background:'#4caf50', color:'white', padding:'15px 50px', fontSize:'1.2rem'}}>返回大廳</button>
+              <p style={{fontSize:'1.5rem'}}>最終得分：{myRole==='p1'?p1Score:p2Score}</p>
+              <button className="btn" onClick={finishGameAndGoLobby} style={{background:'#4caf50', color:'white', padding:'15px 50px', fontSize:'1.2rem', marginTop:'20px'}}>返回大廳領取獎勵</button>
             </div>
           )}
         </>
