@@ -1,6 +1,6 @@
-// src/firebase.js
 import { initializeApp } from "firebase/app";
-import { getDatabase } from "firebase/database"; // 這是 Realtime Database 的核心
+import { getDatabase } from "firebase/database";
+import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAW50XInUSYmSsT0ww1YZafU2bZlJeOnLc",
@@ -10,11 +10,10 @@ const firebaseConfig = {
   storageBucket: "knowledgeking-a7209.firebasestorage.app",
   messagingSenderId: "121602685475",
   appId: "1:121602685475:web:230ebd9c56d8eacdeecf96",
-  measurementId: "G-MC0CNXQX39"
 };
 
-// 初始化 Firebase
 const app = initializeApp(firebaseConfig);
 
-// 獲取資料庫實例並導出
 export const db = getDatabase(app);
+export const auth = getAuth(app);
+export default app;
