@@ -60,6 +60,8 @@ function App() {
   const roomDataRef = useRef(null);
   const gameOverPlayedRef = useRef(false);
   const rewardClaimingRef = useRef(false);
+  const advanceTimerRef = useRef(null);
+  const advanceLockRef = useRef('');
 
   const BASE = import.meta.env.BASE_URL;
 
@@ -86,14 +88,68 @@ function App() {
     [BASE]
   );
 
+  const dbSet = async (path, data) => {
+    try {
+      await set(ref(db, path), data);
+    } catch (err) {
+      console.error('SET FAIL ->', path, err);
+      throw err;
+    }
+  };
+
+  const dbUpdate = async (path, data) => {
+    try {
+      await update(ref(db, path), data);
+    } catch (err) {
+      console.error('UPDATE FAIL ->', path, err);
+      throw err;
+    }
+  };
+
+  const dbRemove = async (path) => {
+    try {
+      await remove(ref(db, path));
+    } catch (err) {
+      console.error('REMOVE FAIL ->', path, err);
+      throw err;
+    }
+  };
+
+  const dbPush = async (path, data) => {
+    try {
+      return await push(ref(db, path), data);
+    } catch (err) {
+      console.error('PUSH FAIL ->', path, err);
+      throw err;
+    }
+  };
+
+  const dbTx = async (path, updater) => {
+    try {
+      return await runTransaction(ref(db, path), updater);
+    } catch (err) {
+      console.error('TX FAIL ->', path, err);
+      throw err;
+    }
+  };
+
+  const dbRootUpdate = async (updates) => {
+    try {
+      await update(ref(db), updates);
+    } catch (err) {
+      console.error('ROOT UPDATE FAIL ->', updates, err);
+      throw err;
+    }
+  };
+
   const calcWinRate = (w = 0, l = 0) => {
     const total = (w || 0) + (l || 0);
-    return total === 0 ? '0%' : ((w / total) * 100).toFixed(1) + '%';
+    return total === 0 ? '0%' : `${((w / total) * 100).toFixed(1)}%`;
   };
 
   const shuffleQuestions = useCallback((source) => {
     const arr = [...source];
-    for (let i = arr.length - 1; i > 0; i--) {
+    for (let i = arr.length - 1; i > 0; i -= 1) {
       const j = Math.floor(Math.random() * (i + 1));
       [arr[i], arr[j]] = [arr[j], arr[i]];
     }
@@ -122,7 +178,18 @@ function App() {
     isSwitching.current = false;
     gameOverPlayedRef.current = false;
     rewardClaimingRef.current = false;
+    advanceLockRef.current = '';
+    if (advanceTimerRef.current) {
+      clearTimeout(advanceTimerRef.current);
+      advanceTimerRef.current = null;
+    }
   }, [stopAllAudio]);
+
+  const roomCurrentIdx = roomData?.currentIdx ?? 0;
+  const roomGameOver = !!roomData?.gameOver;
+  const p1Answered = !!roomData?.selections?.p1;
+  const p2Answered = !!roomData?.selections?.p2;
+  const bothAnswered = p1Answered && p2Answered;
 
   useEffect(() => {
     roomDataRef.current = roomData;
@@ -141,10 +208,10 @@ function App() {
     stopAllAudio();
 
     if (view === 'lobby') {
-      lobbyBgm.current.play().catch((err) => console.error(err));
+      lobbyBgm.current.play().catch(console.error);
     } else if (view === 'game') {
-      if (isAiMode) aiBgm.current.play().catch((err) => console.error(err));
-      else gameBgm.current.play().catch((err) => console.error(err));
+      if (isAiMode) aiBgm.current.play().catch(console.error);
+      else gameBgm.current.play().catch(console.error);
     }
   }, [view, isAiMode, user, stopAllAudio]);
 
@@ -187,41 +254,45 @@ function App() {
         return;
       }
 
-      const uid = fbUser.uid;
-      const inferredStudentId = fbUser.email?.split('@')[0] || '';
-      const student = STUDENTS.find((s) => s.id === inferredStudentId);
+      try {
+        const uid = fbUser.uid;
+        const inferredStudentId = fbUser.email?.split('@')[0] || '';
+        const student = STUDENTS.find((s) => s.id === inferredStudentId);
 
-      const userRef = ref(db, `users/${uid}`);
-      const snap = await get(userRef);
+        const userRef = ref(db, `users/${uid}`);
+        const snap = await get(userRef);
 
-      const baseUserData = {
-        studentId: inferredStudentId,
-        name: student?.name || inferredStudentId,
-        totalScore: 0,
-        hp: 20,
-        wins: 0,
-        losses: 0,
-        isTeacher: inferredStudentId === 'teacher',
-      };
-
-      let finalUserData = baseUserData;
-
-      if (!snap.exists()) {
-        await set(userRef, baseUserData);
-      } else {
-        finalUserData = {
-          ...baseUserData,
-          ...snap.val(),
-          studentId: snap.val().studentId || inferredStudentId,
-          name: snap.val().name || student?.name || inferredStudentId,
+        const baseUserData = {
+          studentId: inferredStudentId,
+          name: student?.name || inferredStudentId,
+          totalScore: 0,
+          hp: 20,
+          wins: 0,
+          losses: 0,
+          isTeacher: inferredStudentId === 'teacher',
         };
-      }
 
-      setUser({
-        uid,
-        ...finalUserData,
-      });
-      setView((prev) => (prev === 'login' ? 'lobby' : prev));
+        let finalUserData = baseUserData;
+
+        if (!snap.exists()) {
+          await dbSet(`users/${uid}`, baseUserData);
+        } else {
+          finalUserData = {
+            ...baseUserData,
+            ...snap.val(),
+            studentId: snap.val().studentId || inferredStudentId,
+            name: snap.val().name || student?.name || inferredStudentId,
+          };
+        }
+
+        setUser({
+          uid,
+          ...finalUserData,
+        });
+        setView((prev) => (prev === 'login' ? 'lobby' : prev));
+      } catch (err) {
+        console.error(err);
+      }
     });
 
     return () => unsub();
@@ -251,7 +322,7 @@ function App() {
           }));
         }
       },
-      (err) => console.error(err)
+      console.error
     );
 
     const offMessages = onValue(
@@ -261,7 +332,7 @@ function App() {
         const list = Object.values(val).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
         setMessages(list);
       },
-      (err) => console.error(err)
+      console.error
     );
 
     return () => {
@@ -299,14 +370,14 @@ function App() {
       let finalUserData = baseUserData;
 
       if (!snap.exists()) {
-        await set(userRef, baseUserData);
+        await dbSet(`users/${uid}`, baseUserData);
       } else {
         finalUserData = {
           ...baseUserData,
           ...snap.val(),
         };
 
-        await update(userRef, {
+        await dbUpdate(`users/${uid}`, {
           studentId: student.id,
           name: student.name,
           isTeacher: student.id === 'teacher',
@@ -336,7 +407,7 @@ function App() {
     const shuffled = shuffleQuestions(allQuestions);
     const now = Date.now();
 
-    await set(ref(db, `rooms/${tid}`), {
+    await dbSet(`rooms/${tid}`, {
       roomType: 'ai',
       p1: user.name,
       p1Uid: user.uid,
@@ -354,11 +425,9 @@ function App() {
       lastActive: now,
       rewardClaimed: {},
       presence: {},
-    }).catch((err) => console.error(err));
+    }).catch(console.error);
 
-    await update(ref(db, `users/${user.uid}`), { hp: increment(-4) }).catch((err) =>
-      console.error(err)
-    );
+    await dbUpdate(`users/${user.uid}`, { hp: increment(-4) }).catch(console.error);
 
     setQuestions(shuffled);
     setMyRole('p1');
@@ -380,13 +449,12 @@ function App() {
     if (!allQuestions.length) return;
 
     const tid = `Table_${num}`;
-    const roomRef = ref(db, `rooms/${tid}`);
     const shuffled = shuffleQuestions(allQuestions);
     const now = Date.now();
 
     let result;
     try {
-      result = await runTransaction(roomRef, (room) => {
+      result = await dbTx(`rooms/${tid}`, (room) => {
         const inactive =
           !room ||
           room.gameOver ||
@@ -454,9 +522,7 @@ function App() {
       return;
     }
 
-    await update(ref(db, `users/${user.uid}`), { hp: increment(-2) }).catch((err) =>
-      console.error(err)
-    );
+    await dbUpdate(`users/${user.uid}`, { hp: increment(-2) }).catch(console.error);
 
     setMyRole(role);
     setRoomId(tid);
@@ -522,8 +588,8 @@ function App() {
 
           [aiBgm, gameBgm].forEach((b) => b.current.pause());
 
-          if (myFinal > oppFinal) winSfx.current.play().catch((err) => console.error(err));
-          else loseSfx.current.play().catch((err) => console.error(err));
+          if (myFinal > oppFinal) winSfx.current.play().catch(console.error);
+          else loseSfx.current.play().catch(console.error);
 
           gameOverPlayedRef.current = true;
         }
@@ -532,7 +598,7 @@ function App() {
           gameOverPlayedRef.current = false;
         }
       },
-      (err) => console.error(err)
+      console.error
     );
 
     return () => offRoom();
@@ -541,24 +607,31 @@ function App() {
   useEffect(() => {
     if (!roomId || !user?.uid || view !== 'game') return;
 
-    const roomRef = ref(db, `rooms/${roomId}`);
-    const presenceRef = ref(db, `rooms/${roomId}/presence/${user.uid}`);
+    const presencePath = `rooms/${roomId}/presence/${user.uid}`;
+    const presenceRef = ref(db, presencePath);
     const disconnectOp = onDisconnect(presenceRef);
 
-    set(presenceRef, { online: true, ts: Date.now() }).catch((err) => console.error(err));
-    disconnectOp.remove().catch((err) => console.error(err));
+    dbSet(presencePath, { online: true, ts: Date.now() }).catch(console.error);
+    disconnectOp.remove().catch(console.error);
+
+    if (isAiMode) {
+      return () => {
+        disconnectOp.cancel().catch(console.error);
+        dbRemove(presencePath).catch(console.error);
+      };
+    }
 
     const timer = setInterval(() => {
-      set(presenceRef, { online: true, ts: Date.now() }).catch((err) => console.error(err));
-      update(roomRef, { lastActive: Date.now() }).catch((err) => console.error(err));
+      dbSet(presencePath, { online: true, ts: Date.now() }).catch(console.error);
+      dbUpdate(`rooms/${roomId}`, { lastActive: Date.now() }).catch(console.error);
     }, HEARTBEAT_MS);
 
     return () => {
       clearInterval(timer);
-      disconnectOp.cancel().catch((err) => console.error(err));
-      remove(presenceRef).catch((err) => console.error(err));
+      disconnectOp.cancel().catch(console.error);
+      dbRemove(presencePath).catch(console.error);
     };
-  }, [roomId, user?.uid, view]);
+  }, [roomId, user?.uid, view, isAiMode]);
 
   useEffect(() => {
     if (!questionEndsAt || gameOver || (!p2Joined && !isAiMode)) {
@@ -576,58 +649,100 @@ function App() {
     return () => clearInterval(timer);
   }, [questionEndsAt, gameOver, p2Joined, isAiMode]);
 
-  useEffect(() => {
-    if (!roomId || myRole !== 'p1' || !roomData || roomData.gameOver) return;
+  const advanceToNextQuestion = useCallback(
+    async (expectedIdx) => {
+      if (!roomId) return;
 
-    const bothAnswered = !!roomData.selections?.p1 && !!roomData.selections?.p2;
-    if (!bothAnswered || isSwitching.current) return;
+      try {
+        const result = await dbTx(`rooms/${roomId}`, (room) => {
+          if (!room || room.gameOver) return room;
+          if ((room.currentIdx || 0) !== expectedIdx) return room;
+          if (!room.selections?.p1 || !room.selections?.p2) return room;
 
-    isSwitching.current = true;
-    const expectedIdx = roomData.currentIdx || 0;
+          const nextIdx = expectedIdx + 1;
 
-    const timer = setTimeout(async () => {
-      await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
-        if (!room || room.gameOver) return room;
-        if ((room.currentIdx || 0) !== expectedIdx) return room;
-        if (!room.selections?.p1 || !room.selections?.p2) return room;
+          if (nextIdx >= (room.roomQuestions?.length || QUESTION_COUNT)) {
+            return {
+              ...room,
+              gameOver: true,
+              finishedAt: Date.now(),
+              lastActive: Date.now(),
+            };
+          }
 
-        const nextIdx = expectedIdx + 1;
-
-        if (nextIdx >= (room.roomQuestions?.length || QUESTION_COUNT)) {
           return {
             ...room,
-            gameOver: true,
-            finishedAt: Date.now(),
+            currentIdx: nextIdx,
+            selections: null,
+            questionEndsAt: Date.now() + QUESTION_TIME * 1000,
             lastActive: Date.now(),
           };
-        }
+        });
 
-        return {
-          ...room,
-          currentIdx: nextIdx,
-          selections: null,
-          questionEndsAt: Date.now() + QUESTION_TIME * 1000,
-          lastActive: Date.now(),
-        };
-      }).catch((err) => console.error(err));
-
-      isSwitching.current = false;
-    }, REVEAL_MS);
-
-    return () => clearTimeout(timer);
-  }, [roomId, myRole, roomData]);
+        console.log('advanceToNextQuestion committed =', result.committed);
+      } catch (err) {
+        console.error('advanceToNextQuestion failed:', err);
+      }
+    },
+    [roomId]
+  );
 
   useEffect(() => {
-    if (!roomId || myRole !== 'p1' || !roomData || roomData.gameOver) return;
+    if (!roomId || myRole !== 'p1' || !roomData || roomGameOver) return;
+    if (!bothAnswered) return;
+
+    const key = `${roomId}-${roomCurrentIdx}`;
+    if (advanceLockRef.current === key) return;
+
+    advanceLockRef.current = key;
+    isSwitching.current = true;
+
+    const timerId = setTimeout(async () => {
+      advanceTimerRef.current = null;
+      await advanceToNextQuestion(roomCurrentIdx);
+    }, REVEAL_MS);
+
+    advanceTimerRef.current = timerId;
+
+    return () => {
+      clearTimeout(timerId);
+
+      if (advanceTimerRef.current === timerId) {
+        advanceTimerRef.current = null;
+      }
+
+      if ((roomDataRef.current?.currentIdx ?? 0) === roomCurrentIdx) {
+        isSwitching.current = false;
+        advanceLockRef.current = '';
+      }
+    };
+  }, [roomId, myRole, roomCurrentIdx, roomGameOver, bothAnswered, advanceToNextQuestion]);
+
+  useEffect(() => {
+    advanceLockRef.current = '';
+    isSwitching.current = false;
+
+    if (advanceTimerRef.current) {
+      clearTimeout(advanceTimerRef.current);
+      advanceTimerRef.current = null;
+    }
+  }, [currentIdx, roomId]);
+
+  useEffect(() => {
+    if (!roomId || myRole !== 'p1' || !roomData || roomGameOver) return;
     if (isSwitching.current) return;
     if (!questionEndsAt) return;
+    if (bothAnswered) return;
     if (Date.now() < questionEndsAt) return;
 
     isSwitching.current = true;
 
-    runTransaction(ref(db, `rooms/${roomId}`), (room) => {
+    dbTx(`rooms/${roomId}`, (room) => {
       if (!room || room.gameOver) return room;
       if (Date.now() < (room.questionEndsAt || 0)) return room;
+
+      const alreadyBothAnswered = !!room.selections?.p1 && !!room.selections?.p2;
+      if (alreadyBothAnswered) return room;
 
       const nextSelections = { ...(room.selections || {}) };
 
@@ -658,17 +773,17 @@ function App() {
         lastActive: Date.now(),
       };
     })
-      .catch((err) => console.error(err))
+      .catch(console.error)
       .finally(() => {
         isSwitching.current = false;
       });
-  }, [roomId, myRole, roomData, questionEndsAt]);
+  }, [roomId, myRole, roomGameOver, questionEndsAt, bothAnswered, roomData]);
 
   useEffect(() => {
-    if (!isAiMode || !roomId || !roomData || roomData.gameOver) return;
-    if (!roomData.selections?.p1 || roomData.selections?.p2) return;
+    if (!isAiMode || !roomId || roomGameOver) return;
+    if (!p1Answered || p2Answered) return;
 
-    const expectedIdx = roomData.currentIdx || 0;
+    const expectedIdx = roomCurrentIdx;
 
     const timer = setTimeout(async () => {
       const q = roomDataRef.current?.roomQuestions?.[expectedIdx];
@@ -681,7 +796,7 @@ function App() {
           ? correctOpt
           : wrongOpts[Math.floor(Math.random() * wrongOpts.length)] || correctOpt;
 
-      await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
+      await dbTx(`rooms/${roomId}`, (room) => {
         if (!room || room.gameOver) return room;
         if ((room.currentIdx || 0) !== expectedIdx) return room;
         if (room.selections?.p2) return room;
@@ -703,11 +818,11 @@ function App() {
           },
           lastActive: Date.now(),
         };
-      }).catch((err) => console.error(err));
+      }).catch(console.error);
     }, 800);
 
     return () => clearTimeout(timer);
-  }, [isAiMode, roomId, roomData]);
+  }, [isAiMode, roomId, roomGameOver, roomCurrentIdx, p1Answered, p2Answered]);
 
   const onSelect = async (opt) => {
     if (!roomId || !user?.uid) return;
@@ -717,13 +832,13 @@ function App() {
 
     if (opt.isCorrect) {
       correctSfx.current.currentTime = 0;
-      correctSfx.current.play().catch((err) => console.error(err));
+      correctSfx.current.play().catch(console.error);
     } else {
       wrongSfx.current.currentTime = 0;
-      wrongSfx.current.play().catch((err) => console.error(err));
+      wrongSfx.current.play().catch(console.error);
     }
 
-    await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
+    await dbTx(`rooms/${roomId}`, (room) => {
       if (!room || room.gameOver) return room;
 
       const role =
@@ -757,7 +872,7 @@ function App() {
         },
         lastActive: Date.now(),
       };
-    }).catch((err) => console.error(err));
+    }).catch(console.error);
   };
 
   const finishGameAndGoLobby = async () => {
@@ -784,14 +899,12 @@ function App() {
       if (isWin) updates[`users/${user.uid}/hp`] = increment(5);
     }
 
-    await update(ref(db), updates).catch((err) => console.error(err));
+    await dbRootUpdate(updates).catch(console.error);
 
     if (roomId) {
-      remove(ref(db, `rooms/${roomId}/presence/${user.uid}`)).catch((err) =>
-        console.error(err)
-      );
+      await dbRemove(`rooms/${roomId}/presence/${user.uid}`).catch(console.error);
       if (isAiMode) {
-        remove(ref(db, `rooms/${roomId}`)).catch((err) => console.error(err));
+        await dbRemove(`rooms/${roomId}`).catch(console.error);
       }
     }
 
@@ -803,11 +916,11 @@ function App() {
   const sendMessage = async () => {
     if (!user || !inputMsg.trim()) return;
 
-    await push(ref(db, 'messages'), {
+    await dbPush('messages', {
       user: user.name,
       text: inputMsg.trim(),
       timestamp: Date.now(),
-    }).catch((err) => console.error(err));
+    }).catch(console.error);
 
     setInputMsg('');
   };
@@ -908,7 +1021,9 @@ function App() {
                 src={avatarSrc(user.studentId)}
                 className="avatar"
                 alt=""
-                onError={(e) => (e.target.src = 'https://via.placeholder.com/40')}
+                onError={(e) => {
+                  e.target.src = 'https://via.placeholder.com/40';
+                }}
               />
               <b>{user.name}</b>
               <span style={{ color: '#ff5252', marginLeft: '5px' }}>❤️ {user.hp}</span>
@@ -921,10 +1036,10 @@ function App() {
                     alert('積分不足');
                     return;
                   }
-                  await update(ref(db, `users/${user.uid}`), {
+                  await dbUpdate(`users/${user.uid}`, {
                     totalScore: increment(-15),
                     hp: increment(1),
-                  }).catch((err) => console.error(err));
+                  }).catch(console.error);
                   alert('兌換成功');
                 }}
                 className="btn"
@@ -939,7 +1054,7 @@ function App() {
               </button>
               <button
                 onClick={async () => {
-                  await signOut(auth).catch((err) => console.error(err));
+                  await signOut(auth).catch(console.error);
                   resetGameState();
                   setUser(null);
                   setView('login');
@@ -981,7 +1096,9 @@ function App() {
                               src={avatarSrc(u.studentId)}
                               className="avatar"
                               alt=""
-                              onError={(e) => (e.target.src = 'https://via.placeholder.com/40')}
+                              onError={(e) => {
+                                e.target.src = 'https://via.placeholder.com/40';
+                              }}
                             />
                           </td>
                           <td>{u.name}</td>
@@ -1099,7 +1216,9 @@ function App() {
                         src={p1Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : avatarSrc(p1Id, 80)}
                         className="avatar-lg"
                         alt=""
-                        onError={(e) => (e.target.src = 'https://via.placeholder.com/80')}
+                        onError={(e) => {
+                          e.target.src = 'https://via.placeholder.com/80';
+                        }}
                       />
                       <div style={{ fontSize: '1.5rem', color: '#4caf50' }}>{p1Score}</div>
                       <small>{p1Name}</small>
@@ -1110,7 +1229,9 @@ function App() {
                         src={p2Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : avatarSrc(p2Id, 80)}
                         className="avatar-lg"
                         alt=""
-                        onError={(e) => (e.target.src = 'https://via.placeholder.com/80')}
+                        onError={(e) => {
+                          e.target.src = 'https://via.placeholder.com/80';
+                        }}
                       />
                       <div style={{ fontSize: '1.5rem', color: '#2196f3' }}>{p2Score}</div>
                       <small>{p2Name}</small>
@@ -1135,8 +1256,8 @@ function App() {
                               ? opt.isCorrect
                                 ? '#2e7d32'
                                 : selections[myRole].text === opt.text
-                                ? '#c62828'
-                                : '#333'
+                                  ? '#c62828'
+                                  : '#333'
                               : '#333',
                           }}
                         >
