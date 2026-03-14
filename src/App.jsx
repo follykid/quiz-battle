@@ -71,6 +71,21 @@ function App() {
   const winSfx = useRef(new Audio(`${BASE}sounds/win.mp3`));
   const loseSfx = useRef(new Audio(`${BASE}sounds/lose.mp3`));
 
+  const stopAllAudio = useCallback(() => {
+    [lobbyBgm, gameBgm, aiBgm, correctSfx, wrongSfx, winSfx, loseSfx].forEach((s) => {
+      s.current.pause();
+      s.current.currentTime = 0;
+    });
+  }, []);
+
+  const avatarSrc = useCallback(
+    (studentId, size = 40) => {
+      if (!studentId) return `https://via.placeholder.com/${size}`;
+      return `${BASE}avatars/${String(studentId).trim()}.jpg`;
+    },
+    [BASE]
+  );
+
   const calcWinRate = (w = 0, l = 0) => {
     const total = (w || 0) + (l || 0);
     return total === 0 ? '0%' : ((w / total) * 100).toFixed(1) + '%';
@@ -86,6 +101,7 @@ function App() {
   }, []);
 
   const resetGameState = useCallback(() => {
+    stopAllAudio();
     setRoomId('');
     setMyRole('viewer');
     setP2Joined(false);
@@ -106,7 +122,7 @@ function App() {
     isSwitching.current = false;
     gameOverPlayedRef.current = false;
     rewardClaimingRef.current = false;
-  }, []);
+  }, [stopAllAudio]);
 
   useEffect(() => {
     roomDataRef.current = roomData;
@@ -122,22 +138,15 @@ function App() {
   useEffect(() => {
     if (!user) return;
 
-    const stopAll = () => {
-      [lobbyBgm, gameBgm, aiBgm].forEach((b) => {
-        b.current.pause();
-        b.current.currentTime = 0;
-      });
-    };
-
-    stopAll();
+    stopAllAudio();
 
     if (view === 'lobby') {
-      lobbyBgm.current.play().catch(() => {});
+      lobbyBgm.current.play().catch((err) => console.error(err));
     } else if (view === 'game') {
-      if (isAiMode) aiBgm.current.play().catch(() => {});
-      else gameBgm.current.play().catch(() => {});
+      if (isAiMode) aiBgm.current.play().catch((err) => console.error(err));
+      else gameBgm.current.play().catch((err) => console.error(err));
     }
-  }, [view, isAiMode, user]);
+  }, [view, isAiMode, user, stopAllAudio]);
 
   useEffect(() => {
     fetch(`${BASE}quiz.csv`)
@@ -163,7 +172,10 @@ function App() {
           },
         });
       })
-      .catch(() => setLoading(false));
+      .catch((err) => {
+        console.error(err);
+        setLoading(false);
+      });
   }, [BASE]);
 
   useEffect(() => {
@@ -218,31 +230,39 @@ function App() {
   useEffect(() => {
     if (!user?.uid) return;
 
-    const offUsers = onValue(ref(db, 'users'), (snap) => {
-      const val = snap.val() || {};
-      const list = Object.entries(val)
-        .map(([uid, v]) => ({ uid, ...v }))
-        .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0))
-        .slice(0, 15);
+    const offUsers = onValue(
+      ref(db, 'users'),
+      (snap) => {
+        const val = snap.val() || {};
+        const list = Object.entries(val)
+          .map(([uid, v]) => ({ uid, ...v }))
+          .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0))
+          .slice(0, 15);
 
-      setLeaderboard(list);
+        setLeaderboard(list);
 
-      const me = val[user.uid];
-      if (me) {
-        setUser((prev) => ({
-          ...prev,
-          ...me,
-          uid: prev.uid,
-          studentId: me.studentId || prev.studentId,
-        }));
-      }
-    });
+        const me = val[user.uid];
+        if (me) {
+          setUser((prev) => ({
+            ...prev,
+            ...me,
+            uid: prev.uid,
+            studentId: me.studentId || prev.studentId,
+          }));
+        }
+      },
+      (err) => console.error(err)
+    );
 
-    const offMessages = onValue(ref(db, 'messages'), (snap) => {
-      const val = snap.val() || {};
-      const list = Object.values(val).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-      setMessages(list);
-    });
+    const offMessages = onValue(
+      ref(db, 'messages'),
+      (snap) => {
+        const val = snap.val() || {};
+        const list = Object.values(val).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        setMessages(list);
+      },
+      (err) => console.error(err)
+    );
 
     return () => {
       offUsers();
@@ -334,9 +354,11 @@ function App() {
       lastActive: now,
       rewardClaimed: {},
       presence: {},
-    });
+    }).catch((err) => console.error(err));
 
-    await update(ref(db, `users/${user.uid}`), { hp: increment(-4) });
+    await update(ref(db, `users/${user.uid}`), { hp: increment(-4) }).catch((err) =>
+      console.error(err)
+    );
 
     setQuestions(shuffled);
     setMyRole('p1');
@@ -362,54 +384,61 @@ function App() {
     const shuffled = shuffleQuestions(allQuestions);
     const now = Date.now();
 
-    const result = await runTransaction(roomRef, (room) => {
-      const inactive =
-        !room ||
-        room.gameOver ||
-        !room.p1Uid ||
-        now - (room.lastActive || 0) > ROOM_TIMEOUT_MS;
+    let result;
+    try {
+      result = await runTransaction(roomRef, (room) => {
+        const inactive =
+          !room ||
+          room.gameOver ||
+          !room.p1Uid ||
+          now - (room.lastActive || 0) > ROOM_TIMEOUT_MS;
 
-      if (inactive) {
-        return {
-          roomType: 'pvp',
-          p1: user.name,
-          p1Uid: user.uid,
-          p1Id: user.studentId,
-          p2: null,
-          p2Uid: null,
-          p2Id: null,
-          roomQuestions: shuffled,
-          currentIdx: 0,
-          questionEndsAt: now + QUESTION_TIME * 1000,
-          scores: { p1: 0, p2: 0 },
-          selections: null,
-          gameOver: false,
-          createdAt: now,
-          lastActive: now,
-          rewardClaimed: {},
-          presence: {},
-        };
-      }
+        if (inactive) {
+          return {
+            roomType: 'pvp',
+            p1: user.name,
+            p1Uid: user.uid,
+            p1Id: user.studentId,
+            p2: null,
+            p2Uid: null,
+            p2Id: null,
+            roomQuestions: shuffled,
+            currentIdx: 0,
+            questionEndsAt: now + QUESTION_TIME * 1000,
+            scores: { p1: 0, p2: 0 },
+            selections: null,
+            gameOver: false,
+            createdAt: now,
+            lastActive: now,
+            rewardClaimed: {},
+            presence: {},
+          };
+        }
 
-      if (room.p1Uid === user.uid || room.p2Uid === user.uid) {
-        return {
-          ...room,
-          lastActive: now,
-        };
-      }
+        if (room.p1Uid === user.uid || room.p2Uid === user.uid) {
+          return {
+            ...room,
+            lastActive: now,
+          };
+        }
 
-      if (!room.p2Uid) {
-        return {
-          ...room,
-          p2: user.name,
-          p2Uid: user.uid,
-          p2Id: user.studentId,
-          lastActive: now,
-        };
-      }
+        if (!room.p2Uid) {
+          return {
+            ...room,
+            p2: user.name,
+            p2Uid: user.uid,
+            p2Id: user.studentId,
+            lastActive: now,
+          };
+        }
 
-      return room;
-    });
+        return room;
+      });
+    } catch (err) {
+      console.error(err);
+      alert('進房失敗，請再試一次');
+      return;
+    }
 
     const finalRoom = result.snapshot.val();
     if (!finalRoom) {
@@ -425,7 +454,9 @@ function App() {
       return;
     }
 
-    await update(ref(db, `users/${user.uid}`), { hp: increment(-2) });
+    await update(ref(db, `users/${user.uid}`), { hp: increment(-2) }).catch((err) =>
+      console.error(err)
+    );
 
     setMyRole(role);
     setRoomId(tid);
@@ -440,66 +471,72 @@ function App() {
 
     const roomRef = ref(db, `rooms/${roomId}`);
 
-    const offRoom = onValue(roomRef, (snap) => {
-      const data = snap.val();
+    const offRoom = onValue(
+      roomRef,
+      (snap) => {
+        const data = snap.val();
 
-      if (!data) {
-        if (view === 'game') {
+        if (!data) {
+          if (view === 'game') {
+            stopAllAudio();
+            resetGameState();
+            setView('lobby');
+          }
+          return;
+        }
+
+        const roleFromDb =
+          data.p1Uid === user.uid ? 'p1' : data.p2Uid === user.uid ? 'p2' : null;
+
+        if (!roleFromDb) {
+          stopAllAudio();
           resetGameState();
           setView('lobby');
+          return;
         }
-        return;
-      }
 
-      const roleFromDb =
-        data.p1Uid === user.uid ? 'p1' : data.p2Uid === user.uid ? 'p2' : null;
+        setRoomData(data);
+        setMyRole(roleFromDb);
+        setP1Name(data.p1 || '');
+        setP1Id(data.p1Id || '');
+        setP2Name(data.p2 || '等待中...');
+        setP2Id(data.p2Id || '');
+        setP2Joined(!!data.p2Uid);
+        setSelections(data.selections || null);
+        setCurrentIdx(data.currentIdx || 0);
+        setQuestionEndsAt(data.questionEndsAt || 0);
+        setGameOver(!!data.gameOver);
 
-      if (!roleFromDb) {
-        resetGameState();
-        setView('lobby');
-        return;
-      }
+        if (data.scores) {
+          setP1Score(data.scores.p1 || 0);
+          setP2Score(data.scores.p2 || 0);
+        }
 
-      setRoomData(data);
-      setMyRole(roleFromDb);
-      setP1Name(data.p1 || '');
-      setP1Id(data.p1Id || '');
-      setP2Name(data.p2 || '等待中...');
-      setP2Id(data.p2Id || '');
-      setP2Joined(!!data.p2Uid);
-      setSelections(data.selections || null);
-      setCurrentIdx(data.currentIdx || 0);
-      setQuestionEndsAt(data.questionEndsAt || 0);
-      setGameOver(!!data.gameOver);
+        if (data.roomQuestions) {
+          setQuestions(data.roomQuestions);
+        }
 
-      if (data.scores) {
-        setP1Score(data.scores.p1 || 0);
-        setP2Score(data.scores.p2 || 0);
-      }
+        if (data.gameOver && !gameOverPlayedRef.current) {
+          const myFinal = roleFromDb === 'p1' ? data.scores?.p1 || 0 : data.scores?.p2 || 0;
+          const oppFinal = roleFromDb === 'p1' ? data.scores?.p2 || 0 : data.scores?.p1 || 0;
 
-      if (data.roomQuestions) {
-        setQuestions(data.roomQuestions);
-      }
+          [aiBgm, gameBgm].forEach((b) => b.current.pause());
 
-      if (data.gameOver && !gameOverPlayedRef.current) {
-        const myFinal = roleFromDb === 'p1' ? data.scores?.p1 || 0 : data.scores?.p2 || 0;
-        const oppFinal = roleFromDb === 'p1' ? data.scores?.p2 || 0 : data.scores?.p1 || 0;
+          if (myFinal > oppFinal) winSfx.current.play().catch((err) => console.error(err));
+          else loseSfx.current.play().catch((err) => console.error(err));
 
-        [aiBgm, gameBgm].forEach((b) => b.current.pause());
+          gameOverPlayedRef.current = true;
+        }
 
-        if (myFinal > oppFinal) winSfx.current.play().catch(() => {});
-        else loseSfx.current.play().catch(() => {});
-
-        gameOverPlayedRef.current = true;
-      }
-
-      if (!data.gameOver) {
-        gameOverPlayedRef.current = false;
-      }
-    });
+        if (!data.gameOver) {
+          gameOverPlayedRef.current = false;
+        }
+      },
+      (err) => console.error(err)
+    );
 
     return () => offRoom();
-  }, [roomId, user?.uid, view, resetGameState]);
+  }, [roomId, user?.uid, view, resetGameState, stopAllAudio]);
 
   useEffect(() => {
     if (!roomId || !user?.uid || view !== 'game') return;
@@ -508,18 +545,18 @@ function App() {
     const presenceRef = ref(db, `rooms/${roomId}/presence/${user.uid}`);
     const disconnectOp = onDisconnect(presenceRef);
 
-    set(presenceRef, { online: true, ts: Date.now() }).catch(() => {});
-    disconnectOp.remove().catch(() => {});
+    set(presenceRef, { online: true, ts: Date.now() }).catch((err) => console.error(err));
+    disconnectOp.remove().catch((err) => console.error(err));
 
     const timer = setInterval(() => {
-      set(presenceRef, { online: true, ts: Date.now() }).catch(() => {});
-      update(roomRef, { lastActive: Date.now() }).catch(() => {});
+      set(presenceRef, { online: true, ts: Date.now() }).catch((err) => console.error(err));
+      update(roomRef, { lastActive: Date.now() }).catch((err) => console.error(err));
     }, HEARTBEAT_MS);
 
     return () => {
       clearInterval(timer);
-      disconnectOp.cancel().catch(() => {});
-      remove(presenceRef).catch(() => {});
+      disconnectOp.cancel().catch((err) => console.error(err));
+      remove(presenceRef).catch((err) => console.error(err));
     };
   }, [roomId, user?.uid, view]);
 
@@ -572,7 +609,7 @@ function App() {
           questionEndsAt: Date.now() + QUESTION_TIME * 1000,
           lastActive: Date.now(),
         };
-      }).catch(() => {});
+      }).catch((err) => console.error(err));
 
       isSwitching.current = false;
     }, REVEAL_MS);
@@ -621,7 +658,7 @@ function App() {
         lastActive: Date.now(),
       };
     })
-      .catch(() => {})
+      .catch((err) => console.error(err))
       .finally(() => {
         isSwitching.current = false;
       });
@@ -666,7 +703,7 @@ function App() {
           },
           lastActive: Date.now(),
         };
-      }).catch(() => {});
+      }).catch((err) => console.error(err));
     }, 800);
 
     return () => clearTimeout(timer);
@@ -680,10 +717,10 @@ function App() {
 
     if (opt.isCorrect) {
       correctSfx.current.currentTime = 0;
-      correctSfx.current.play().catch(() => {});
+      correctSfx.current.play().catch((err) => console.error(err));
     } else {
       wrongSfx.current.currentTime = 0;
-      wrongSfx.current.play().catch(() => {});
+      wrongSfx.current.play().catch((err) => console.error(err));
     }
 
     await runTransaction(ref(db, `rooms/${roomId}`), (room) => {
@@ -720,7 +757,7 @@ function App() {
         },
         lastActive: Date.now(),
       };
-    }).catch(() => {});
+    }).catch((err) => console.error(err));
   };
 
   const finishGameAndGoLobby = async () => {
@@ -747,20 +784,18 @@ function App() {
       if (isWin) updates[`users/${user.uid}/hp`] = increment(5);
     }
 
-    await update(ref(db), updates).catch(() => {});
+    await update(ref(db), updates).catch((err) => console.error(err));
 
     if (roomId) {
-      remove(ref(db, `rooms/${roomId}/presence/${user.uid}`)).catch(() => {});
+      remove(ref(db, `rooms/${roomId}/presence/${user.uid}`)).catch((err) =>
+        console.error(err)
+      );
       if (isAiMode) {
-        remove(ref(db, `rooms/${roomId}`)).catch(() => {});
+        remove(ref(db, `rooms/${roomId}`)).catch((err) => console.error(err));
       }
     }
 
-    [winSfx, loseSfx].forEach((s) => {
-      s.current.pause();
-      s.current.currentTime = 0;
-    });
-
+    stopAllAudio();
     resetGameState();
     setView('lobby');
   };
@@ -772,7 +807,7 @@ function App() {
       user: user.name,
       text: inputMsg.trim(),
       timestamp: Date.now(),
-    });
+    }).catch((err) => console.error(err));
 
     setInputMsg('');
   };
@@ -806,7 +841,23 @@ function App() {
       {view === 'login' && (
         <div style={{ padding: '80px 20px', textAlign: 'center' }}>
           <h1>⚔️ 知識對戰系統</h1>
-          <div className="box" style={{ maxWidth: '320px', margin: '0 auto' }}>
+          <div className="box" style={{ maxWidth: '360px', margin: '0 auto' }}>
+            <div
+              style={{
+                background: '#111',
+                border: '1px solid #333',
+                borderRadius: '10px',
+                padding: '12px 14px',
+                marginBottom: '18px',
+                lineHeight: 1.8,
+                color: '#ffeb3b',
+                fontWeight: 'bold',
+              }}
+            >
+              <div>登入請輸入「學號」</div>
+              <div>密碼都是「111111」</div>
+            </div>
+
             <input
               placeholder="學號"
               value={loginId}
@@ -854,7 +905,7 @@ function App() {
           <header>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <img
-                src={`${BASE}avatars/${user.studentId}.jpg`}
+                src={avatarSrc(user.studentId)}
                 className="avatar"
                 alt=""
                 onError={(e) => (e.target.src = 'https://via.placeholder.com/40')}
@@ -873,7 +924,7 @@ function App() {
                   await update(ref(db, `users/${user.uid}`), {
                     totalScore: increment(-15),
                     hp: increment(1),
-                  });
+                  }).catch((err) => console.error(err));
                   alert('兌換成功');
                 }}
                 className="btn"
@@ -888,7 +939,7 @@ function App() {
               </button>
               <button
                 onClick={async () => {
-                  await signOut(auth);
+                  await signOut(auth).catch((err) => console.error(err));
                   resetGameState();
                   setUser(null);
                   setView('login');
@@ -927,7 +978,7 @@ function App() {
                           <td>{i + 1}</td>
                           <td>
                             <img
-                              src={`${BASE}avatars/${u.studentId}.jpg`}
+                              src={avatarSrc(u.studentId)}
                               className="avatar"
                               alt=""
                               onError={(e) => (e.target.src = 'https://via.placeholder.com/40')}
@@ -1045,11 +1096,7 @@ function App() {
                   >
                     <div>
                       <img
-                        src={
-                          p1Id === 'ai'
-                            ? 'https://via.placeholder.com/80?text=AI'
-                            : `${BASE}avatars/${p1Id}.jpg`
-                        }
+                        src={p1Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : avatarSrc(p1Id, 80)}
                         className="avatar-lg"
                         alt=""
                         onError={(e) => (e.target.src = 'https://via.placeholder.com/80')}
@@ -1060,11 +1107,7 @@ function App() {
                     <div style={{ fontSize: '2rem' }}>VS</div>
                     <div>
                       <img
-                        src={
-                          p2Id === 'ai'
-                            ? 'https://via.placeholder.com/80?text=AI'
-                            : `${BASE}avatars/${p2Id}.jpg`
-                        }
+                        src={p2Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : avatarSrc(p2Id, 80)}
                         className="avatar-lg"
                         alt=""
                         onError={(e) => (e.target.src = 'https://via.placeholder.com/80')}
