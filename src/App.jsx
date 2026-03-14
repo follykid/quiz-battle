@@ -27,6 +27,14 @@ const HEARTBEAT_MS = 5000;
 const REVEAL_MS = 1200;
 const AUTH_EMAIL_DOMAIN = 'sshes.tyc.edu.tw';
 
+const AI_AVATAR_SRC = `data:image/svg+xml;utf8,${encodeURIComponent(`
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
+  <rect width="160" height="160" rx="80" fill="#1e1e1e"/>
+  <circle cx="80" cy="80" r="70" fill="#2d2d2d" stroke="#ffeb3b" stroke-width="6"/>
+  <text x="80" y="92" font-size="44" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-weight="bold">AI</text>
+</svg>
+`)}`;
+
 function App() {
   const [user, setUser] = useState(null);
   const [loginId, setLoginId] = useState('');
@@ -36,6 +44,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState([]);
   const [inputMsg, setInputMsg] = useState('');
+  const [questionStatsList, setQuestionStatsList] = useState([]);
 
   const [roomId, setRoomId] = useState('');
   const [myRole, setMyRole] = useState('viewer');
@@ -83,6 +92,7 @@ function App() {
   const avatarSrc = useCallback(
     (studentId, size = 40) => {
       if (!studentId) return `https://via.placeholder.com/${size}`;
+      if (studentId === 'ai') return AI_AVATAR_SRC;
       return `${BASE}avatars/${String(studentId).trim()}.jpg`;
     },
     [BASE]
@@ -155,6 +165,43 @@ function App() {
     }
     return arr.slice(0, QUESTION_COUNT);
   }, []);
+
+  const questionKeyOf = (text = '') => {
+    const bytes = new TextEncoder().encode(text);
+    let binary = '';
+    bytes.forEach((b) => {
+      binary += String.fromCharCode(b);
+    });
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  };
+
+  const recordQuestionStat = async (questionObj, isCorrect) => {
+    if (!questionObj?.question) return;
+    if (user?.isTeacher) return;
+
+    const key = questionKeyOf(questionObj.question);
+    const correctAnswer =
+      questionObj.options?.find((o) => o.isCorrect)?.text || '';
+
+    await dbTx(`questionStats/${key}`, (stat) => {
+      const current = stat || {
+        question: questionObj.question,
+        correctAnswer,
+        attempts: 0,
+        wrongs: 0,
+        updatedAt: 0,
+      };
+
+      return {
+        ...current,
+        question: questionObj.question,
+        correctAnswer,
+        attempts: (current.attempts || 0) + 1,
+        wrongs: (current.wrongs || 0) + (isCorrect ? 0 : 1),
+        updatedAt: Date.now(),
+      };
+    });
+  };
 
   const resetGameState = useCallback(() => {
     stopAllAudio();
@@ -340,6 +387,40 @@ function App() {
       offMessages();
     };
   }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid || !user?.isTeacher) {
+      setQuestionStatsList([]);
+      return;
+    }
+
+    const offStats = onValue(
+      ref(db, 'questionStats'),
+      (snap) => {
+        const val = snap.val() || {};
+        const list = Object.entries(val)
+          .map(([id, v]) => ({
+            id,
+            ...v,
+            attempts: v.attempts || 0,
+            wrongs: v.wrongs || 0,
+            wrongRate: (v.attempts || 0) > 0 ? ((v.wrongs || 0) / v.attempts) : 0,
+          }))
+          .filter((v) => v.attempts > 0)
+          .sort((a, b) => {
+            if (b.wrongRate !== a.wrongRate) return b.wrongRate - a.wrongRate;
+            if (b.wrongs !== a.wrongs) return b.wrongs - a.wrongs;
+            return b.attempts - a.attempts;
+          })
+          .slice(0, 20);
+
+        setQuestionStatsList(list);
+      },
+      console.error
+    );
+
+    return () => offStats();
+  }, [user?.uid, user?.isTeacher]);
 
   const handleLogin = async () => {
     const student = STUDENTS.find((s) => s.id === loginId);
@@ -729,6 +810,7 @@ function App() {
   }, [currentIdx, roomId]);
 
   useEffect(() => {
+    if (!roomId || myRole !== 'p1' || !roomGameOver && !roomData) return;
     if (!roomId || myRole !== 'p1' || !roomData || roomGameOver) return;
     if (isSwitching.current) return;
     if (!questionEndsAt) return;
@@ -838,7 +920,7 @@ function App() {
       wrongSfx.current.play().catch(console.error);
     }
 
-    await dbTx(`rooms/${roomId}`, (room) => {
+    const result = await dbTx(`rooms/${roomId}`, (room) => {
       if (!room || room.gameOver) return room;
 
       const role =
@@ -873,6 +955,10 @@ function App() {
         lastActive: Date.now(),
       };
     }).catch(console.error);
+
+    if (result?.committed) {
+      await recordQuestionStat(questions[currentIdx], !!opt.isCorrect).catch(console.error);
+    }
   };
 
   const finishGameAndGoLobby = async () => {
@@ -943,7 +1029,7 @@ function App() {
         .avatar-lg { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid #ffeb3b; background: #333; }
         .rank-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
         .rank-table th { text-align: left; color: #888; border-bottom: 1px solid #444; padding: 5px; }
-        .rank-table td { padding: 8px 5px; border-bottom: 1px solid #222; }
+        .rank-table td { padding: 8px 5px; border-bottom: 1px solid #222; vertical-align: top; }
         .lobby-layout { display: grid; grid-template-columns: 320px 1fr; gap: 20px; max-width: 1200px; margin: 0 auto; padding: 10px; }
         @media (max-width: 850px) { .lobby-layout { grid-template-columns: 1fr; } }
         header { position: sticky; top: 0; z-index: 1000; background: #1e1e1e; padding: 10px 15px; border-bottom: 2px solid #333; display: flex; justify-content: space-between; align-items: center; }
@@ -1030,28 +1116,30 @@ function App() {
               <span style={{ color: '#ffeb3b', marginLeft: '5px' }}>💰 {user.totalScore}</span>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                onClick={async () => {
-                  if (user.totalScore < 15) {
-                    alert('積分不足');
-                    return;
-                  }
-                  await dbUpdate(`users/${user.uid}`, {
-                    totalScore: increment(-15),
-                    hp: increment(1),
-                  }).catch(console.error);
-                  alert('兌換成功');
-                }}
-                className="btn"
-                style={{
-                  background: '#4caf50',
-                  color: 'white',
-                  padding: '5px 10px',
-                  fontSize: '0.8rem',
-                }}
-              >
-                +1HP(15分)
-              </button>
+              {!user?.isTeacher && (
+                <button
+                  onClick={async () => {
+                    if (user.totalScore < 15) {
+                      alert('積分不足');
+                      return;
+                    }
+                    await dbUpdate(`users/${user.uid}`, {
+                      totalScore: increment(-15),
+                      hp: increment(1),
+                    }).catch(console.error);
+                    alert('兌換成功');
+                  }}
+                  className="btn"
+                  style={{
+                    background: '#4caf50',
+                    color: 'white',
+                    padding: '5px 10px',
+                    fontSize: '0.8rem',
+                  }}
+                >
+                  +1HP(15分)
+                </button>
+              )}
               <button
                 onClick={async () => {
                   await signOut(auth).catch(console.error);
@@ -1073,7 +1161,54 @@ function App() {
           </header>
 
           <main style={{ flex: 1, paddingTop: '20px' }}>
-            {view === 'lobby' && (
+            {view === 'lobby' && user?.isTeacher && (
+              <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '10px' }}>
+                <div className="box">
+                  <h3 style={{ color: '#ffeb3b', textAlign: 'center', marginTop: 0 }}>
+                    📊 學生容易錯的題目
+                  </h3>
+
+                  {questionStatsList.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#aaa', padding: '20px 0' }}>
+                      目前尚無統計資料
+                    </div>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table className="rank-table" style={{ fontSize: '0.95rem' }}>
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            <th>題目</th>
+                            <th>正解</th>
+                            <th>作答次數</th>
+                            <th>答錯次數</th>
+                            <th>錯誤率</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {questionStatsList.map((q, i) => (
+                            <tr key={q.id}>
+                              <td>{i + 1}</td>
+                              <td style={{ maxWidth: '520px', whiteSpace: 'normal', lineHeight: 1.6 }}>
+                                {q.question}
+                              </td>
+                              <td style={{ color: '#4caf50' }}>{q.correctAnswer || '-'}</td>
+                              <td>{q.attempts}</td>
+                              <td style={{ color: '#ff5252' }}>{q.wrongs}</td>
+                              <td style={{ color: '#ffeb3b' }}>
+                                {q.attempts > 0 ? `${(q.wrongRate * 100).toFixed(1)}%` : '0%'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {view === 'lobby' && !user?.isTeacher && (
               <div className="lobby-layout">
                 <div className="box">
                   <h3 style={{ color: '#ffeb3b', textAlign: 'center', marginTop: 0 }}>🏆 榮譽榜</h3>
@@ -1213,7 +1348,7 @@ function App() {
                   >
                     <div>
                       <img
-                        src={p1Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : avatarSrc(p1Id, 80)}
+                        src={avatarSrc(p1Id, 80)}
                         className="avatar-lg"
                         alt=""
                         onError={(e) => {
@@ -1226,7 +1361,7 @@ function App() {
                     <div style={{ fontSize: '2rem' }}>VS</div>
                     <div>
                       <img
-                        src={p2Id === 'ai' ? 'https://via.placeholder.com/80?text=AI' : avatarSrc(p2Id, 80)}
+                        src={avatarSrc(p2Id, 80)}
                         className="avatar-lg"
                         alt=""
                         onError={(e) => {
