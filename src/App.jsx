@@ -810,7 +810,6 @@ function App() {
   }, [currentIdx, roomId]);
 
   useEffect(() => {
-    if (!roomId || myRole !== 'p1' || !roomGameOver && !roomData) return;
     if (!roomId || myRole !== 'p1' || !roomData || roomGameOver) return;
     if (isSwitching.current) return;
     if (!questionEndsAt) return;
@@ -1022,25 +1021,221 @@ function App() {
   return (
     <div className="safe-container">
       <style>{`
-        html, body { background: #121212; margin: 0; padding: 0; font-family: sans-serif; color: white; }
-        .box { background: #1e1e1e; padding: 20px; border-radius: 15px; border: 1px solid #333; margin-bottom: 10px; }
-        .btn { padding: 12px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; }
-        .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #444; background: #333; }
-        .avatar-lg { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid #ffeb3b; background: #333; }
-        .rank-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-        .rank-table th { text-align: left; color: #888; border-bottom: 1px solid #444; padding: 5px; }
-        .rank-table td { padding: 8px 5px; border-bottom: 1px solid #222; vertical-align: top; }
-        .lobby-layout { display: grid; grid-template-columns: 320px 1fr; gap: 20px; max-width: 1200px; margin: 0 auto; padding: 10px; }
-        @media (max-width: 850px) { .lobby-layout { grid-template-columns: 1fr; } }
-        header { position: sticky; top: 0; z-index: 1000; background: #1e1e1e; padding: 10px 15px; border-bottom: 2px solid #333; display: flex; justify-content: space-between; align-items: center; }
-        .msg-box { height: 300px; overflow-y: auto; background: #111; padding: 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #333; display: flex; flex-direction: column; }
-        .option-btn { padding: 18px; font-size: 1.1rem; border-radius: 12px; border: none; color: white; background: #333; margin-bottom: 10px; width: 100%; text-align: left; cursor: pointer; }
+        html, body, #root {
+          margin: 0;
+          padding: 0;
+          min-height: 100%;
+          background: #121212;
+          font-family: sans-serif;
+          color: white;
+          overflow-x: hidden;
+          overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
+        }
+
+        .safe-container {
+          min-height: 100dvh;
+          width: 100%;
+          overflow-x: hidden;
+          overflow-y: auto;
+          box-sizing: border-box;
+        }
+
+        .box {
+          background: #1e1e1e;
+          padding: 20px;
+          border-radius: 15px;
+          border: 1px solid #333;
+          margin-bottom: 10px;
+          box-sizing: border-box;
+        }
+
+        .btn {
+          padding: 12px;
+          border-radius: 8px;
+          border: none;
+          font-weight: bold;
+          cursor: pointer;
+        }
+
+        .avatar {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          object-fit: cover;
+          border: 2px solid #444;
+          background: #333;
+          flex-shrink: 0;
+        }
+
+        .avatar-lg {
+          width: 80px;
+          height: 80px;
+          border-radius: 50%;
+          object-fit: cover;
+          border: 3px solid #ffeb3b;
+          background: #333;
+          flex-shrink: 0;
+        }
+
+        .rank-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 0.85rem;
+        }
+
+        .rank-table th {
+          text-align: left;
+          color: #888;
+          border-bottom: 1px solid #444;
+          padding: 5px;
+        }
+
+        .rank-table td {
+          padding: 8px 5px;
+          border-bottom: 1px solid #222;
+          vertical-align: top;
+        }
+
+        .lobby-layout {
+          display: grid;
+          grid-template-columns: 320px 1fr;
+          gap: 20px;
+          max-width: 1200px;
+          margin: 0 auto;
+          padding: 10px;
+          box-sizing: border-box;
+        }
+
+        header {
+          position: sticky;
+          top: 0;
+          z-index: 1000;
+          background: #1e1e1e;
+          padding: 10px 15px;
+          border-bottom: 2px solid #333;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          box-sizing: border-box;
+        }
+
+        .msg-box {
+          height: 300px;
+          overflow-y: auto;
+          background: #111;
+          padding: 15px;
+          border-radius: 10px;
+          margin-bottom: 10px;
+          border: 1px solid #333;
+          display: flex;
+          flex-direction: column;
+          box-sizing: border-box;
+        }
+
+        .option-btn {
+          padding: 18px;
+          font-size: 1.1rem;
+          border-radius: 12px;
+          border: none;
+          color: white;
+          background: #333;
+          margin-bottom: 10px;
+          width: 100%;
+          text-align: left;
+          cursor: pointer;
+          box-sizing: border-box;
+          word-break: break-word;
+        }
+
+        input, button, textarea, select {
+          font-size: 16px;
+        }
+
+        @media (max-width: 850px) {
+          .lobby-layout {
+            grid-template-columns: 1fr;
+            gap: 12px;
+            padding: 8px;
+          }
+
+          .box {
+            padding: 14px;
+            border-radius: 12px;
+          }
+
+          .avatar-lg {
+            width: 64px;
+            height: 64px;
+          }
+
+          .rank-table {
+            font-size: 0.78rem;
+          }
+
+          .option-btn {
+            padding: 14px;
+            font-size: 1rem;
+          }
+        }
+
+        @media (max-width: 480px) {
+          header {
+            padding: 10px;
+          }
+
+          .box {
+            padding: 12px;
+          }
+
+          .msg-box {
+            height: 220px;
+            padding: 10px;
+          }
+
+          .avatar {
+            width: 34px;
+            height: 34px;
+          }
+
+          .avatar-lg {
+            width: 56px;
+            height: 56px;
+          }
+
+          .rank-table {
+            font-size: 0.72rem;
+          }
+
+          .option-btn {
+            padding: 12px;
+            font-size: 0.95rem;
+          }
+        }
       `}</style>
 
       {view === 'login' && (
-        <div style={{ padding: '80px 20px', textAlign: 'center' }}>
+        <div
+          style={{
+            padding: '40px 12px',
+            textAlign: 'center',
+            width: '100%',
+            boxSizing: 'border-box',
+            overflowX: 'hidden',
+          }}
+        >
           <h1>⚔️ 知識對戰系統</h1>
-          <div className="box" style={{ maxWidth: '360px', margin: '0 auto' }}>
+          <div
+            className="box"
+            style={{
+              maxWidth: '360px',
+              width: '100%',
+              margin: '0 auto',
+              boxSizing: 'border-box',
+            }}
+          >
             <div
               style={{
                 background: '#111',
@@ -1102,7 +1297,7 @@ function App() {
       {user && view !== 'login' && (
         <>
           <header>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
               <img
                 src={avatarSrc(user.studentId)}
                 className="avatar"
@@ -1111,11 +1306,11 @@ function App() {
                   e.target.src = 'https://via.placeholder.com/40';
                 }}
               />
-              <b>{user.name}</b>
+              <b style={{ wordBreak: 'break-word' }}>{user.name}</b>
               <span style={{ color: '#ff5252', marginLeft: '5px' }}>❤️ {user.hp}</span>
               <span style={{ color: '#ffeb3b', marginLeft: '5px' }}>💰 {user.totalScore}</span>
             </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               {!user?.isTeacher && (
                 <button
                   onClick={async () => {
@@ -1160,9 +1355,17 @@ function App() {
             </div>
           </header>
 
-          <main style={{ flex: 1, paddingTop: '20px' }}>
+          <main style={{ width: '100%', boxSizing: 'border-box', paddingTop: '12px' }}>
             {view === 'lobby' && user?.isTeacher && (
-              <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '10px' }}>
+              <div
+                style={{
+                  maxWidth: '1200px',
+                  width: '100%',
+                  margin: '0 auto',
+                  padding: '8px',
+                  boxSizing: 'border-box',
+                }}
+              >
                 <div className="box">
                   <h3 style={{ color: '#ffeb3b', textAlign: 'center', marginTop: 0 }}>
                     📊 學生容易錯的題目
@@ -1174,7 +1377,7 @@ function App() {
                     </div>
                   ) : (
                     <div style={{ overflowX: 'auto' }}>
-                      <table className="rank-table" style={{ fontSize: '0.95rem' }}>
+                      <table className="rank-table" style={{ fontSize: '0.95rem', minWidth: '720px' }}>
                         <thead>
                           <tr>
                             <th>#</th>
@@ -1212,37 +1415,39 @@ function App() {
               <div className="lobby-layout">
                 <div className="box">
                   <h3 style={{ color: '#ffeb3b', textAlign: 'center', marginTop: 0 }}>🏆 榮譽榜</h3>
-                  <table className="rank-table">
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>頭像</th>
-                        <th>姓名</th>
-                        <th>積分</th>
-                        <th>勝率</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {leaderboard.map((u, i) => (
-                        <tr key={u.uid}>
-                          <td>{i + 1}</td>
-                          <td>
-                            <img
-                              src={avatarSrc(u.studentId)}
-                              className="avatar"
-                              alt=""
-                              onError={(e) => {
-                                e.target.src = 'https://via.placeholder.com/40';
-                              }}
-                            />
-                          </td>
-                          <td>{u.name}</td>
-                          <td style={{ color: '#4caf50' }}>{u.totalScore}</td>
-                          <td style={{ color: '#ffeb3b' }}>{calcWinRate(u.wins, u.losses)}</td>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="rank-table" style={{ minWidth: '360px' }}>
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>頭像</th>
+                          <th>姓名</th>
+                          <th>積分</th>
+                          <th>勝率</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {leaderboard.map((u, i) => (
+                          <tr key={u.uid}>
+                            <td>{i + 1}</td>
+                            <td>
+                              <img
+                                src={avatarSrc(u.studentId)}
+                                className="avatar"
+                                alt=""
+                                onError={(e) => {
+                                  e.target.src = 'https://via.placeholder.com/40';
+                                }}
+                              />
+                            </td>
+                            <td>{u.name}</td>
+                            <td style={{ color: '#4caf50' }}>{u.totalScore}</td>
+                            <td style={{ color: '#ffeb3b' }}>{calcWinRate(u.wins, u.losses)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
 
                 <div>
@@ -1295,6 +1500,7 @@ function App() {
                               marginBottom: '8px',
                               borderBottom: '1px solid #222',
                               paddingBottom: '4px',
+                              wordBreak: 'break-word',
                             }}
                           >
                             <b style={{ color: '#4caf50' }}>{m.user}</b>: {m.text}
@@ -1332,7 +1538,15 @@ function App() {
             )}
 
             {view === 'game' && (
-              <div style={{ maxWidth: '800px', margin: '0 auto', padding: '10px' }}>
+              <div
+                style={{
+                  maxWidth: '800px',
+                  width: '100%',
+                  margin: '0 auto',
+                  padding: '8px',
+                  boxSizing: 'border-box',
+                }}
+              >
                 <div style={{ textAlign: 'center', marginBottom: '20px' }}>
                   <div style={{ fontSize: '3rem', fontWeight: 'bold' }}>{timeLeft}s</div>
                   <div
@@ -1340,13 +1554,15 @@ function App() {
                       display: 'flex',
                       justifyContent: 'space-around',
                       alignItems: 'center',
+                      gap: '12px',
+                      flexWrap: 'wrap',
                       background: '#1e1e1e',
                       padding: '15px',
                       borderRadius: '15px',
                       border: '1px solid #444',
                     }}
                   >
-                    <div>
+                    <div style={{ minWidth: 100 }}>
                       <img
                         src={avatarSrc(p1Id, 80)}
                         className="avatar-lg"
@@ -1356,10 +1572,10 @@ function App() {
                         }}
                       />
                       <div style={{ fontSize: '1.5rem', color: '#4caf50' }}>{p1Score}</div>
-                      <small>{p1Name}</small>
+                      <small style={{ wordBreak: 'break-word' }}>{p1Name}</small>
                     </div>
                     <div style={{ fontSize: '2rem' }}>VS</div>
-                    <div>
+                    <div style={{ minWidth: 100 }}>
                       <img
                         src={avatarSrc(p2Id, 80)}
                         className="avatar-lg"
@@ -1369,7 +1585,7 @@ function App() {
                         }}
                       />
                       <div style={{ fontSize: '1.5rem', color: '#2196f3' }}>{p2Score}</div>
-                      <small>{p2Name}</small>
+                      <small style={{ wordBreak: 'break-word' }}>{p2Name}</small>
                     </div>
                   </div>
                 </div>
@@ -1377,7 +1593,7 @@ function App() {
                 {(p2Joined || isAiMode) ? (
                   questions[currentIdx] && (
                     <div className="box">
-                      <div style={{ fontSize: '1.2rem', marginBottom: '15px' }}>
+                      <div style={{ fontSize: '1.2rem', marginBottom: '15px', wordBreak: 'break-word' }}>
                         Q{currentIdx + 1}: {questions[currentIdx].question}
                       </div>
                       {questions[currentIdx].options.map((opt, i) => (
@@ -1402,7 +1618,9 @@ function App() {
                     </div>
                   )
                 ) : (
-                  <div style={{ textAlign: 'center', padding: '50px' }}>⏳ 等待對手加入...</div>
+                  <div className="box" style={{ textAlign: 'center', padding: '32px 12px' }}>
+                    ⏳ 等待對手加入...
+                  </div>
                 )}
               </div>
             )}
@@ -1412,26 +1630,27 @@ function App() {
             <div
               style={{
                 position: 'fixed',
-                top: 0,
-                left: 0,
-                width: '100%',
-                height: '100%',
+                inset: 0,
                 background: 'rgba(0,0,0,0.95)',
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'center',
                 alignItems: 'center',
                 zIndex: 2000,
+                padding: '20px',
+                boxSizing: 'border-box',
+                textAlign: 'center',
               }}
             >
               <h1
                 style={{
-                  fontSize: '4rem',
+                  fontSize: 'clamp(2.2rem, 10vw, 4rem)',
                   color:
                     (myRole === 'p1' ? p1Score : p2Score) >
                     (myRole === 'p1' ? p2Score : p1Score)
                       ? '#ffeb3b'
                       : '#ff5252',
+                  marginBottom: '20px',
                 }}
               >
                 {(myRole === 'p1' ? p1Score : p2Score) >
@@ -1445,8 +1664,9 @@ function App() {
                 style={{
                   background: '#4caf50',
                   color: 'white',
-                  padding: '15px 50px',
-                  fontSize: '1.2rem',
+                  padding: '15px 32px',
+                  fontSize: '1.1rem',
+                  maxWidth: '100%',
                 }}
               >
                 返回大廳
