@@ -157,6 +157,16 @@ function App() {
     return total === 0 ? '0%' : `${((w / total) * 100).toFixed(1)}%`;
   };
 
+  const formatMessageTime = (ts) => {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${hh}-${mm}-${month}-${day}`;
+  };
+
   const shuffleQuestions = useCallback((source) => {
     const arr = [...source];
     for (let i = arr.length - 1; i > 0; i -= 1) {
@@ -1038,7 +1048,12 @@ function App() {
                 lineHeight: 1.6,
               }}
             >
-              <b style={{ color: '#4caf50' }}>{m.user}</b>: {m.text}
+              <span>
+                <b style={{ color: '#4caf50' }}>{m.user}</b>: {m.text}
+                <span style={{ color: '#888', marginLeft: '8px', fontSize: '0.85em' }}>
+                  {formatMessageTime(m.timestamp)}
+                </span>
+              </span>
             </div>
           ))}
       </div>
