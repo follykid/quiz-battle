@@ -1010,6 +1010,68 @@ function App() {
     setInputMsg('');
   };
 
+  const renderMessageBoard = (compact = false) => (
+    <div
+      className="box"
+      style={{
+        marginTop: compact ? '12px' : 0,
+      }}
+    >
+      <h4 style={{ marginTop: 0 }}>💬 留言板 (最新在上方)</h4>
+      <div
+        className="msg-box"
+        style={{
+          height: compact ? '220px' : '300px',
+        }}
+      >
+        {messages
+          .slice()
+          .reverse()
+          .map((m, i) => (
+            <div
+              key={`${m.timestamp || 0}-${i}`}
+              style={{
+                marginBottom: '8px',
+                borderBottom: '1px solid #222',
+                paddingBottom: '4px',
+                wordBreak: 'break-word',
+                lineHeight: 1.6,
+              }}
+            >
+              <b style={{ color: '#4caf50' }}>{m.user}</b>: {m.text}
+            </div>
+          ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: '5px' }}>
+        <input
+          value={inputMsg}
+          onChange={(e) => setInputMsg(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') sendMessage();
+          }}
+          style={{
+            flex: 1,
+            padding: '10px',
+            borderRadius: '8px',
+            background: '#333',
+            border: 'none',
+            color: 'white',
+            minWidth: 0,
+          }}
+          placeholder="輸入聊天..."
+        />
+        <button
+          onClick={sendMessage}
+          className="btn"
+          style={{ background: '#4caf50', color: 'white', flexShrink: 0 }}
+        >
+          發送
+        </button>
+      </div>
+    </div>
+  );
+
   if (loading) {
     return (
       <div style={{ color: 'white', textAlign: 'center', marginTop: '50px' }}>
@@ -1408,6 +1470,8 @@ function App() {
                     </div>
                   )}
                 </div>
+
+                {renderMessageBoard()}
               </div>
             )}
 
@@ -1487,52 +1551,7 @@ function App() {
                     </div>
                   </div>
 
-                  <div className="box">
-                    <h4 style={{ marginTop: 0 }}>💬 留言板 (最新在上方)</h4>
-                    <div className="msg-box">
-                      {messages
-                        .slice()
-                        .reverse()
-                        .map((m, i) => (
-                          <div
-                            key={`${m.timestamp || 0}-${i}`}
-                            style={{
-                              marginBottom: '8px',
-                              borderBottom: '1px solid #222',
-                              paddingBottom: '4px',
-                              wordBreak: 'break-word',
-                            }}
-                          >
-                            <b style={{ color: '#4caf50' }}>{m.user}</b>: {m.text}
-                          </div>
-                        ))}
-                    </div>
-                    <div style={{ display: 'flex', gap: '5px' }}>
-                      <input
-                        value={inputMsg}
-                        onChange={(e) => setInputMsg(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') sendMessage();
-                        }}
-                        style={{
-                          flex: 1,
-                          padding: '10px',
-                          borderRadius: '8px',
-                          background: '#333',
-                          border: 'none',
-                          color: 'white',
-                        }}
-                        placeholder="輸入聊天..."
-                      />
-                      <button
-                        onClick={sendMessage}
-                        className="btn"
-                        style={{ background: '#4caf50', color: 'white' }}
-                      >
-                        發送
-                      </button>
-                    </div>
-                  </div>
+                  {renderMessageBoard()}
                 </div>
               </div>
             )}
@@ -1622,6 +1641,8 @@ function App() {
                     ⏳ 等待對手加入...
                   </div>
                 )}
+
+                {renderMessageBoard(true)}
               </div>
             )}
           </main>
