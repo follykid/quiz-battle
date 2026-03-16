@@ -27,6 +27,8 @@ const HEARTBEAT_MS = 5000;
 const REVEAL_MS = 1200;
 const AUTH_EMAIL_DOMAIN = 'sshes.tyc.edu.tw';
 
+const isTeacherAccount = (studentId = '') => String(studentId).trim().toLowerCase() === 'teacher';
+
 const AI_AVATAR_SRC = `data:image/svg+xml;utf8,${encodeURIComponent(`
 <svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
   <rect width="160" height="160" rx="80" fill="#1e1e1e"/>
@@ -185,9 +187,13 @@ function App() {
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
   };
 
-  const recordQuestionStat = async (questionObj, isCorrect) => {
+  const recordQuestionStatCounts = async (
+    questionObj,
+    { attempts = 1, wrongs = 0 } = {}
+  ) => {
     if (!questionObj?.question) return;
     if (user?.isTeacher) return;
+    if (attempts <= 0) return;
 
     const key = questionKeyOf(questionObj.question);
     const correctAnswer =
@@ -206,10 +212,17 @@ function App() {
         ...current,
         question: questionObj.question,
         correctAnswer,
-        attempts: (current.attempts || 0) + 1,
-        wrongs: (current.wrongs || 0) + (isCorrect ? 0 : 1),
+        attempts: (current.attempts || 0) + attempts,
+        wrongs: (current.wrongs || 0) + wrongs,
         updatedAt: Date.now(),
       };
+    });
+  };
+
+  const recordQuestionStat = async (questionObj, isCorrect) => {
+    await recordQuestionStatCounts(questionObj, {
+      attempts: 1,
+      wrongs: isCorrect ? 0 : 1,
     });
   };
 
@@ -314,32 +327,45 @@ function App() {
       try {
         const uid = fbUser.uid;
         const inferredStudentId = fbUser.email?.split('@')[0] || '';
-        const student = STUDENTS.find((s) => s.id === inferredStudentId);
-
         const userRef = ref(db, `users/${uid}`);
         const snap = await get(userRef);
+        const storedUserData = snap.exists() ? snap.val() : {};
+        const resolvedStudentId = storedUserData.studentId || inferredStudentId;
+        const student =
+          STUDENTS.find((s) => s.id === resolvedStudentId) ||
+          STUDENTS.find((s) => s.id === inferredStudentId);
+
+        const finalIsTeacher =
+          isTeacherAccount(inferredStudentId) ||
+          isTeacherAccount(resolvedStudentId) ||
+          !!storedUserData.isTeacher;
 
         const baseUserData = {
-          studentId: inferredStudentId,
-          name: student?.name || inferredStudentId,
+          studentId: resolvedStudentId,
+          name: student?.name || storedUserData.name || inferredStudentId,
           totalScore: 0,
           hp: 20,
           wins: 0,
           losses: 0,
-          isTeacher: inferredStudentId === 'teacher',
+          isTeacher: finalIsTeacher,
         };
 
-        let finalUserData = baseUserData;
+        const finalUserData = {
+          ...baseUserData,
+          ...storedUserData,
+          studentId: resolvedStudentId,
+          name: storedUserData.name || student?.name || inferredStudentId,
+          isTeacher: finalIsTeacher,
+        };
 
         if (!snap.exists()) {
-          await dbSet(`users/${uid}`, baseUserData);
+          await dbSet(`users/${uid}`, finalUserData);
         } else {
-          finalUserData = {
-            ...baseUserData,
-            ...snap.val(),
-            studentId: snap.val().studentId || inferredStudentId,
-            name: snap.val().name || student?.name || inferredStudentId,
-          };
+          await dbUpdate(`users/${uid}`, {
+            studentId: finalUserData.studentId,
+            name: finalUserData.name,
+            isTeacher: finalUserData.isTeacher,
+          });
         }
 
         setUser({
@@ -371,12 +397,19 @@ function App() {
 
         const me = val[user.uid];
         if (me) {
-          setUser((prev) => ({
-            ...prev,
-            ...me,
-            uid: prev.uid,
-            studentId: me.studentId || prev.studentId,
-          }));
+          setUser((prev) => {
+            const nextStudentId = me.studentId || prev.studentId;
+            return {
+              ...prev,
+              ...me,
+              uid: prev.uid,
+              studentId: nextStudentId,
+              isTeacher:
+                prev.isTeacher ||
+                !!me.isTeacher ||
+                isTeacherAccount(nextStudentId),
+            };
+          });
         }
       },
       console.error
@@ -447,6 +480,11 @@ function App() {
       const uid = cred.user.uid;
       const userRef = ref(db, `users/${uid}`);
       const snap = await get(userRef);
+      const storedUserData = snap.exists() ? snap.val() : {};
+      const finalIsTeacher =
+        isTeacherAccount(student.id) ||
+        isTeacherAccount(storedUserData.studentId) ||
+        !!storedUserData.isTeacher;
 
       const baseUserData = {
         studentId: student.id,
@@ -455,23 +493,24 @@ function App() {
         hp: 20,
         wins: 0,
         losses: 0,
-        isTeacher: student.id === 'teacher',
+        isTeacher: finalIsTeacher,
       };
 
-      let finalUserData = baseUserData;
+      const finalUserData = {
+        ...baseUserData,
+        ...storedUserData,
+        studentId: student.id,
+        name: student.name,
+        isTeacher: finalIsTeacher,
+      };
 
       if (!snap.exists()) {
-        await dbSet(`users/${uid}`, baseUserData);
+        await dbSet(`users/${uid}`, finalUserData);
       } else {
-        finalUserData = {
-          ...baseUserData,
-          ...snap.val(),
-        };
-
         await dbUpdate(`users/${uid}`, {
           studentId: student.id,
           name: student.name,
-          isTeacher: student.id === 'teacher',
+          isTeacher: finalIsTeacher,
         });
       }
 
@@ -828,6 +867,11 @@ function App() {
 
     isSwitching.current = true;
 
+    const currentQuestion = roomDataRef.current?.roomQuestions?.[roomCurrentIdx];
+    const unansweredCount =
+      (roomDataRef.current?.selections?.p1 ? 0 : 1) +
+      (roomDataRef.current?.selections?.p2 ? 0 : 1);
+
     dbTx(`rooms/${roomId}`, (room) => {
       if (!room || room.gameOver) return room;
       if (Date.now() < (room.questionEndsAt || 0)) return room;
@@ -864,11 +908,27 @@ function App() {
         lastActive: Date.now(),
       };
     })
+      .then(async (result) => {
+        if (result?.committed && unansweredCount > 0 && currentQuestion) {
+          await recordQuestionStatCounts(currentQuestion, {
+            attempts: unansweredCount,
+            wrongs: unansweredCount,
+          }).catch(console.error);
+        }
+      })
       .catch(console.error)
       .finally(() => {
         isSwitching.current = false;
       });
-  }, [roomId, myRole, roomGameOver, questionEndsAt, bothAnswered, roomData]);
+  }, [
+    roomId,
+    myRole,
+    roomGameOver,
+    questionEndsAt,
+    bothAnswered,
+    roomData,
+    roomCurrentIdx,
+  ]);
 
   useEffect(() => {
     if (!isAiMode || !roomId || roomGameOver) return;
