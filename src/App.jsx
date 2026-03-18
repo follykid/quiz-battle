@@ -200,7 +200,6 @@ function App() {
 
     const p1Alive = isAliveByUid(room, room.p1Uid);
     const p2Alive = isAliveByUid(room, room.p2Uid);
-
     const aliveCount = (p1Alive ? 1 : 0) + (p2Alive ? 1 : 0);
 
     if (aliveCount <= 0) {
@@ -1274,26 +1273,29 @@ function App() {
           width: 100%;
           border-collapse: collapse;
           font-size: 0.85rem;
+          table-layout: auto;
         }
 
         .rank-table th {
           text-align: left;
           color: #888;
           border-bottom: 1px solid #444;
-          padding: 5px;
+          padding: 5px 8px;
+          white-space: nowrap;
         }
 
         .rank-table td {
-          padding: 8px 5px;
+          padding: 8px 8px;
           border-bottom: 1px solid #222;
-          vertical-align: top;
+          vertical-align: middle;
+          white-space: nowrap;
         }
 
         .lobby-layout {
           display: grid;
-          grid-template-columns: 320px 1fr;
+          grid-template-columns: 380px 1fr;
           gap: 20px;
-          max-width: 1200px;
+          max-width: 1260px;
           margin: 0 auto;
           padding: 10px;
           box-sizing: border-box;
@@ -1346,13 +1348,15 @@ function App() {
           font-size: 16px;
         }
 
-        @media (max-width: 850px) {
+        @media (max-width: 980px) {
           .lobby-layout {
             grid-template-columns: 1fr;
             gap: 12px;
             padding: 8px;
           }
+        }
 
+        @media (max-width: 850px) {
           .box {
             padding: 14px;
             border-radius: 12px;
@@ -1569,7 +1573,7 @@ function App() {
                     </div>
                   ) : (
                     <div style={{ overflowX: 'auto' }}>
-                      <table className="rank-table" style={{ fontSize: '0.95rem', minWidth: '720px' }}>
+                      <table className="rank-table" style={{ fontSize: '0.95rem', minWidth: '820px' }}>
                         <thead>
                           <tr>
                             <th>#</th>
@@ -1587,7 +1591,7 @@ function App() {
                               <td style={{ maxWidth: '520px', whiteSpace: 'normal', lineHeight: 1.6 }}>
                                 {q.question}
                               </td>
-                              <td style={{ color: '#4caf50' }}>{q.correctAnswer || '-'}</td>
+                              <td style={{ color: '#4caf50', whiteSpace: 'normal' }}>{q.correctAnswer || '-'}</td>
                               <td>{q.attempts}</td>
                               <td style={{ color: '#ff5252' }}>{q.wrongs}</td>
                               <td style={{ color: '#ffeb3b' }}>
@@ -1609,14 +1613,16 @@ function App() {
               <div className="lobby-layout">
                 <div className="box">
                   <h3 style={{ color: '#ffeb3b', textAlign: 'center', marginTop: 0 }}>🏆 榮譽榜</h3>
-                  <div style={{ overflowX: 'auto' }}>
-                    <table className="rank-table" style={{ minWidth: '360px' }}>
+                  <div style={{ overflowX: 'auto', width: '100%' }}>
+                    <table className="rank-table" style={{ minWidth: '560px' }}>
                       <thead>
                         <tr>
                           <th>#</th>
                           <th>頭像</th>
                           <th>姓名</th>
                           <th>積分</th>
+                          <th>勝</th>
+                          <th>敗</th>
                           <th>勝率</th>
                         </tr>
                       </thead>
@@ -1636,6 +1642,8 @@ function App() {
                             </td>
                             <td>{u.name}</td>
                             <td style={{ color: '#4caf50' }}>{u.totalScore}</td>
+                            <td>{u.wins || 0}</td>
+                            <td>{u.losses || 0}</td>
                             <td style={{ color: '#ffeb3b' }}>{calcWinRate(u.wins, u.losses)}</td>
                           </tr>
                         ))}
