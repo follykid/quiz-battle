@@ -26,8 +26,7 @@ const ROOM_TIMEOUT_MS = 45000;
 const HEARTBEAT_MS = 5000;
 const REVEAL_MS = 1200;
 const AUTH_EMAIL_DOMAIN = 'sshes.tyc.edu.tw';
-
-const isTeacherAccount = (studentId = '') => String(studentId).trim().toLowerCase() === 'teacher';
+const TOTAL_TABLES = 14;
 
 const AI_AVATAR_SRC = `data:image/svg+xml;utf8,${encodeURIComponent(`
 <svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
@@ -47,6 +46,7 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [inputMsg, setInputMsg] = useState('');
   const [questionStatsList, setQuestionStatsList] = useState([]);
+  const [roomStatusMap, setRoomStatusMap] = useState({});
 
   const [roomId, setRoomId] = useState('');
   const [myRole, setMyRole] = useState('viewer');
@@ -187,13 +187,36 @@ function App() {
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
   };
 
-  const recordQuestionStatCounts = async (
-    questionObj,
-    { attempts = 1, wrongs = 0 } = {}
-  ) => {
+  const isAliveByUid = (room, uid) => {
+    if (!uid || uid === 'ai') return true;
+    const ts = room?.presence?.[uid]?.ts || 0;
+    return Date.now() - ts <= HEARTBEAT_MS * 3;
+  };
+
+  const getRoomDisplayStatus = (room) => {
+    if (!room || room.gameOver || !room.p1Uid) {
+      return { count: 0, label: '空房', bg: '#2c2c2c', border: '#444' };
+    }
+
+    const p1Alive = isAliveByUid(room, room.p1Uid);
+    const p2Alive = isAliveByUid(room, room.p2Uid);
+
+    const aliveCount = (p1Alive ? 1 : 0) + (p2Alive ? 1 : 0);
+
+    if (aliveCount <= 0) {
+      return { count: 0, label: '空房', bg: '#2c2c2c', border: '#444' };
+    }
+
+    if (aliveCount === 1) {
+      return { count: 1, label: '1人', bg: '#8a6d1f', border: '#ffeb3b' };
+    }
+
+    return { count: 2, label: '已滿', bg: '#7f1d1d', border: '#ff5252' };
+  };
+
+  const recordQuestionStat = async (questionObj, isCorrect) => {
     if (!questionObj?.question) return;
     if (user?.isTeacher) return;
-    if (attempts <= 0) return;
 
     const key = questionKeyOf(questionObj.question);
     const correctAnswer =
@@ -208,21 +231,19 @@ function App() {
         updatedAt: 0,
       };
 
+      const prevAttempts = current.attempts ?? current.totalCount ?? 0;
+      const prevWrongs = current.wrongs ?? current.wrongCount ?? 0;
+
       return {
         ...current,
         question: questionObj.question,
-        correctAnswer,
-        attempts: (current.attempts || 0) + attempts,
-        wrongs: (current.wrongs || 0) + wrongs,
+        correctAnswer: current.correctAnswer || correctAnswer,
+        attempts: prevAttempts + 1,
+        wrongs: prevWrongs + (isCorrect ? 0 : 1),
+        totalCount: prevAttempts + 1,
+        wrongCount: prevWrongs + (isCorrect ? 0 : 1),
         updatedAt: Date.now(),
       };
-    });
-  };
-
-  const recordQuestionStat = async (questionObj, isCorrect) => {
-    await recordQuestionStatCounts(questionObj, {
-      attempts: 1,
-      wrongs: isCorrect ? 0 : 1,
     });
   };
 
@@ -297,6 +318,7 @@ function App() {
               .filter((r) => r.question)
               .map((r) => ({
                 question: r.question,
+                category: r.category || '',
                 options: [
                   { text: r.option1, isCorrect: String(r.correct) === '1' },
                   { text: r.option2, isCorrect: String(r.correct) === '2' },
@@ -327,45 +349,32 @@ function App() {
       try {
         const uid = fbUser.uid;
         const inferredStudentId = fbUser.email?.split('@')[0] || '';
+        const student = STUDENTS.find((s) => s.id === inferredStudentId);
+
         const userRef = ref(db, `users/${uid}`);
         const snap = await get(userRef);
-        const storedUserData = snap.exists() ? snap.val() : {};
-        const resolvedStudentId = storedUserData.studentId || inferredStudentId;
-        const student =
-          STUDENTS.find((s) => s.id === resolvedStudentId) ||
-          STUDENTS.find((s) => s.id === inferredStudentId);
-
-        const finalIsTeacher =
-          isTeacherAccount(inferredStudentId) ||
-          isTeacherAccount(resolvedStudentId) ||
-          !!storedUserData.isTeacher;
 
         const baseUserData = {
-          studentId: resolvedStudentId,
-          name: student?.name || storedUserData.name || inferredStudentId,
+          studentId: inferredStudentId,
+          name: student?.name || inferredStudentId,
           totalScore: 0,
           hp: 20,
           wins: 0,
           losses: 0,
-          isTeacher: finalIsTeacher,
+          isTeacher: inferredStudentId === 'teacher',
         };
 
-        const finalUserData = {
-          ...baseUserData,
-          ...storedUserData,
-          studentId: resolvedStudentId,
-          name: storedUserData.name || student?.name || inferredStudentId,
-          isTeacher: finalIsTeacher,
-        };
+        let finalUserData = baseUserData;
 
         if (!snap.exists()) {
-          await dbSet(`users/${uid}`, finalUserData);
+          await dbSet(`users/${uid}`, baseUserData);
         } else {
-          await dbUpdate(`users/${uid}`, {
-            studentId: finalUserData.studentId,
-            name: finalUserData.name,
-            isTeacher: finalUserData.isTeacher,
-          });
+          finalUserData = {
+            ...baseUserData,
+            ...snap.val(),
+            studentId: snap.val().studentId || inferredStudentId,
+            name: snap.val().name || student?.name || inferredStudentId,
+          };
         }
 
         setUser({
@@ -397,19 +406,12 @@ function App() {
 
         const me = val[user.uid];
         if (me) {
-          setUser((prev) => {
-            const nextStudentId = me.studentId || prev.studentId;
-            return {
-              ...prev,
-              ...me,
-              uid: prev.uid,
-              studentId: nextStudentId,
-              isTeacher:
-                prev.isTeacher ||
-                !!me.isTeacher ||
-                isTeacherAccount(nextStudentId),
-            };
-          });
+          setUser((prev) => ({
+            ...prev,
+            ...me,
+            uid: prev.uid,
+            studentId: me.studentId || prev.studentId,
+          }));
         }
       },
       console.error
@@ -432,6 +434,31 @@ function App() {
   }, [user?.uid]);
 
   useEffect(() => {
+    if (!user?.uid || user?.isTeacher) {
+      setRoomStatusMap({});
+      return;
+    }
+
+    const offRooms = onValue(
+      ref(db, 'rooms'),
+      (snap) => {
+        const val = snap.val() || {};
+        const nextMap = {};
+
+        for (let i = 1; i <= TOTAL_TABLES; i += 1) {
+          const tid = `Table_${i}`;
+          nextMap[tid] = getRoomDisplayStatus(val[tid]);
+        }
+
+        setRoomStatusMap(nextMap);
+      },
+      console.error
+    );
+
+    return () => offRooms();
+  }, [user?.uid, user?.isTeacher]);
+
+  useEffect(() => {
     if (!user?.uid || !user?.isTeacher) {
       setQuestionStatsList([]);
       return;
@@ -442,13 +469,19 @@ function App() {
       (snap) => {
         const val = snap.val() || {};
         const list = Object.entries(val)
-          .map(([id, v]) => ({
-            id,
-            ...v,
-            attempts: v.attempts || 0,
-            wrongs: v.wrongs || 0,
-            wrongRate: (v.attempts || 0) > 0 ? ((v.wrongs || 0) / v.attempts) : 0,
-          }))
+          .map(([id, v]) => {
+            const attempts = v.attempts ?? v.totalCount ?? 0;
+            const wrongs = v.wrongs ?? v.wrongCount ?? 0;
+
+            return {
+              id,
+              ...v,
+              attempts,
+              wrongs,
+              correctAnswer: v.correctAnswer || '',
+              wrongRate: attempts > 0 ? wrongs / attempts : 0,
+            };
+          })
           .filter((v) => v.attempts > 0)
           .sort((a, b) => {
             if (b.wrongRate !== a.wrongRate) return b.wrongRate - a.wrongRate;
@@ -480,11 +513,6 @@ function App() {
       const uid = cred.user.uid;
       const userRef = ref(db, `users/${uid}`);
       const snap = await get(userRef);
-      const storedUserData = snap.exists() ? snap.val() : {};
-      const finalIsTeacher =
-        isTeacherAccount(student.id) ||
-        isTeacherAccount(storedUserData.studentId) ||
-        !!storedUserData.isTeacher;
 
       const baseUserData = {
         studentId: student.id,
@@ -493,24 +521,23 @@ function App() {
         hp: 20,
         wins: 0,
         losses: 0,
-        isTeacher: finalIsTeacher,
+        isTeacher: student.id === 'teacher',
       };
 
-      const finalUserData = {
-        ...baseUserData,
-        ...storedUserData,
-        studentId: student.id,
-        name: student.name,
-        isTeacher: finalIsTeacher,
-      };
+      let finalUserData = baseUserData;
 
       if (!snap.exists()) {
-        await dbSet(`users/${uid}`, finalUserData);
+        await dbSet(`users/${uid}`, baseUserData);
       } else {
+        finalUserData = {
+          ...baseUserData,
+          ...snap.val(),
+        };
+
         await dbUpdate(`users/${uid}`, {
           studentId: student.id,
           name: student.name,
-          isTeacher: finalIsTeacher,
+          isTeacher: student.id === 'teacher',
         });
       }
 
@@ -585,13 +612,38 @@ function App() {
     let result;
     try {
       result = await dbTx(`rooms/${tid}`, (room) => {
-        const inactive =
-          !room ||
+        if (!room) {
+          return {
+            roomType: 'pvp',
+            p1: user.name,
+            p1Uid: user.uid,
+            p1Id: user.studentId,
+            p2: null,
+            p2Uid: null,
+            p2Id: null,
+            roomQuestions: shuffled,
+            currentIdx: 0,
+            questionEndsAt: now + QUESTION_TIME * 1000,
+            scores: { p1: 0, p2: 0 },
+            selections: null,
+            gameOver: false,
+            createdAt: now,
+            lastActive: now,
+            rewardClaimed: {},
+            presence: {},
+          };
+        }
+
+        const p1Alive = isAliveByUid(room, room.p1Uid);
+        const p2Alive = isAliveByUid(room, room.p2Uid);
+
+        const roomExpired =
           room.gameOver ||
           !room.p1Uid ||
+          (!p1Alive && !room.p2Uid) ||
           now - (room.lastActive || 0) > ROOM_TIMEOUT_MS;
 
-        if (inactive) {
+        if (roomExpired) {
           return {
             roomType: 'pvp',
             p1: user.name,
@@ -620,7 +672,7 @@ function App() {
           };
         }
 
-        if (!room.p2Uid) {
+        if (!room.p2Uid || !p2Alive) {
           return {
             ...room,
             p2: user.name,
@@ -648,7 +700,7 @@ function App() {
       finalRoom.p1Uid === user.uid ? 'p1' : finalRoom.p2Uid === user.uid ? 'p2' : null;
 
     if (!role) {
-      alert('此房間已滿');
+      alert('此房間已滿或房間狀態尚未清除，請換桌或稍後再試');
       return;
     }
 
@@ -784,7 +836,7 @@ function App() {
       if (!roomId) return;
 
       try {
-        const result = await dbTx(`rooms/${roomId}`, (room) => {
+        await dbTx(`rooms/${roomId}`, (room) => {
           if (!room || room.gameOver) return room;
           if ((room.currentIdx || 0) !== expectedIdx) return room;
           if (!room.selections?.p1 || !room.selections?.p2) return room;
@@ -808,8 +860,6 @@ function App() {
             lastActive: Date.now(),
           };
         });
-
-        console.log('advanceToNextQuestion committed =', result.committed);
       } catch (err) {
         console.error('advanceToNextQuestion failed:', err);
       }
@@ -818,7 +868,7 @@ function App() {
   );
 
   useEffect(() => {
-    if (!roomId || myRole !== 'p1' || !roomData || roomGameOver) return;
+    if (!roomId || myRole === 'viewer' || !roomData || roomGameOver) return;
     if (!bothAnswered) return;
 
     const key = `${roomId}-${roomCurrentIdx}`;
@@ -846,7 +896,7 @@ function App() {
         advanceLockRef.current = '';
       }
     };
-  }, [roomId, myRole, roomCurrentIdx, roomGameOver, bothAnswered, advanceToNextQuestion]);
+  }, [roomId, myRole, roomCurrentIdx, roomGameOver, bothAnswered, advanceToNextQuestion, roomData]);
 
   useEffect(() => {
     advanceLockRef.current = '';
@@ -859,22 +909,33 @@ function App() {
   }, [currentIdx, roomId]);
 
   useEffect(() => {
-    if (!roomId || myRole !== 'p1' || !roomData || roomGameOver) return;
+    if (!roomId || myRole === 'viewer' || !roomData || roomGameOver) return;
     if (isSwitching.current) return;
     if (!questionEndsAt) return;
     if (bothAnswered) return;
-    if (Date.now() < questionEndsAt) return;
+
+    const myAnswered = myRole === 'p1' ? p1Answered : p2Answered;
+    const oppUid = myRole === 'p1' ? roomData.p2Uid : roomData.p1Uid;
+    const oppAlive = isAliveByUid(roomData, oppUid);
+    const shouldForceAdvance = myAnswered && oppUid && !oppAlive;
+
+    if (!shouldForceAdvance && Date.now() < questionEndsAt) return;
 
     isSwitching.current = true;
 
-    const currentQuestion = roomDataRef.current?.roomQuestions?.[roomCurrentIdx];
-    const unansweredCount =
-      (roomDataRef.current?.selections?.p1 ? 0 : 1) +
-      (roomDataRef.current?.selections?.p2 ? 0 : 1);
-
     dbTx(`rooms/${roomId}`, (room) => {
       if (!room || room.gameOver) return room;
-      if (Date.now() < (room.questionEndsAt || 0)) return room;
+
+      const roomMyRole =
+        room.p1Uid === user.uid ? 'p1' : room.p2Uid === user.uid ? 'p2' : null;
+      if (!roomMyRole) return room;
+
+      const roomMyAnswered = roomMyRole === 'p1' ? !!room.selections?.p1 : !!room.selections?.p2;
+      const roomOppUid = roomMyRole === 'p1' ? room.p2Uid : room.p1Uid;
+      const roomOppAlive = isAliveByUid(room, roomOppUid);
+
+      if (!roomMyAnswered && Date.now() < (room.questionEndsAt || 0)) return room;
+      if (roomMyAnswered && roomOppAlive && Date.now() < (room.questionEndsAt || 0)) return room;
 
       const alreadyBothAnswered = !!room.selections?.p1 && !!room.selections?.p2;
       if (alreadyBothAnswered) return room;
@@ -908,14 +969,6 @@ function App() {
         lastActive: Date.now(),
       };
     })
-      .then(async (result) => {
-        if (result?.committed && unansweredCount > 0 && currentQuestion) {
-          await recordQuestionStatCounts(currentQuestion, {
-            attempts: unansweredCount,
-            wrongs: unansweredCount,
-          }).catch(console.error);
-        }
-      })
       .catch(console.error)
       .finally(() => {
         isSwitching.current = false;
@@ -923,11 +976,13 @@ function App() {
   }, [
     roomId,
     myRole,
+    roomData,
     roomGameOver,
     questionEndsAt,
     bothAnswered,
-    roomData,
-    roomCurrentIdx,
+    p1Answered,
+    p2Answered,
+    user?.uid,
   ]);
 
   useEffect(() => {
@@ -1609,20 +1664,37 @@ function App() {
                         gap: '8px',
                       }}
                     >
-                      {Array.from({ length: 14 }).map((_, i) => (
-                        <button
-                          key={i}
-                          className="btn"
-                          onClick={() => handleJoinTable(i + 1)}
-                          style={{
-                            background: '#2c2c2c',
-                            color: 'white',
-                            border: '1px solid #444',
-                          }}
-                        >
-                          桌 {i + 1}
-                        </button>
-                      ))}
+                      {Array.from({ length: TOTAL_TABLES }).map((_, i) => {
+                        const tid = `Table_${i + 1}`;
+                        const status = roomStatusMap[tid] || {
+                          count: 0,
+                          label: '空房',
+                          bg: '#2c2c2c',
+                          border: '#444',
+                        };
+
+                        return (
+                          <button
+                            key={i}
+                            className="btn"
+                            onClick={() => handleJoinTable(i + 1)}
+                            style={{
+                              background: status.bg,
+                              color: 'white',
+                              border: `1px solid ${status.border}`,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '4px',
+                              minHeight: '64px',
+                            }}
+                          >
+                            <span>桌 {i + 1}</span>
+                            <span style={{ fontSize: '0.75rem', color: '#ddd' }}>{status.label}</span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
