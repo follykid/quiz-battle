@@ -1132,11 +1132,7 @@ function App() {
     await dbRootUpdate(updates).catch(console.error);
 
     if (roomId) {
-      if (isAiMode || roomDataRef.current?.gameOver) {
-        await dbRemove(`rooms/${roomId}`).catch(console.error);
-      } else {
-        await dbRemove(`rooms/${roomId}/presence/${user.uid}`).catch(console.error);
-      }
+      await dbRemove(`rooms/${roomId}`).catch(console.error);
     }
 
     stopAllAudio();
