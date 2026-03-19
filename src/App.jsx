@@ -188,14 +188,28 @@ function App() {
   };
 
   const isAliveByUid = (room, uid) => {
-    if (!uid || uid === 'ai') return true;
+    if (!uid) return false;
+    if (uid === 'ai') return true;
     const ts = room?.presence?.[uid]?.ts || 0;
-    return Date.now() - ts <= HEARTBEAT_MS * 3;
+    return ts > 0 && Date.now() - ts <= HEARTBEAT_MS * 3;
   };
 
   const getRoomDisplayStatus = (room) => {
+    const emptyStatus = {
+      count: 0,
+      label: '空房',
+      bg: '#2c2c2c',
+      border: '#555',
+      shadow: 'rgba(255,255,255,0.06)',
+    };
+
     if (!room || room.gameOver || !room.p1Uid) {
-      return { count: 0, label: '空房', bg: '#2c2c2c', border: '#444' };
+      return emptyStatus;
+    }
+
+    const expiredByTime = Date.now() - (room.lastActive || 0) > ROOM_TIMEOUT_MS;
+    if (expiredByTime) {
+      return emptyStatus;
     }
 
     const p1Alive = isAliveByUid(room, room.p1Uid);
@@ -203,14 +217,26 @@ function App() {
     const aliveCount = (p1Alive ? 1 : 0) + (p2Alive ? 1 : 0);
 
     if (aliveCount <= 0) {
-      return { count: 0, label: '空房', bg: '#2c2c2c', border: '#444' };
+      return emptyStatus;
     }
 
     if (aliveCount === 1) {
-      return { count: 1, label: '1人', bg: '#8a6d1f', border: '#ffeb3b' };
+      return {
+        count: 1,
+        label: '1人',
+        bg: '#8a6d1f',
+        border: '#ffeb3b',
+        shadow: 'rgba(255,235,59,0.28)',
+      };
     }
 
-    return { count: 2, label: '已滿', bg: '#7f1d1d', border: '#ff5252' };
+    return {
+      count: 2,
+      label: '已滿',
+      bg: '#7f1d1d',
+      border: '#ff5252',
+      shadow: 'rgba(255,82,82,0.28)',
+    };
   };
 
   const recordQuestionStat = async (questionObj, isCorrect) => {
@@ -608,66 +634,57 @@ function App() {
     const shuffled = shuffleQuestions(allQuestions);
     const now = Date.now();
 
+    const createFreshRoom = () => ({
+      roomType: 'pvp',
+      p1: user.name,
+      p1Uid: user.uid,
+      p1Id: user.studentId,
+      p2: null,
+      p2Uid: null,
+      p2Id: null,
+      roomQuestions: shuffled,
+      currentIdx: 0,
+      questionEndsAt: now + QUESTION_TIME * 1000,
+      scores: { p1: 0, p2: 0 },
+      selections: null,
+      gameOver: false,
+      createdAt: now,
+      lastActive: now,
+      finishedAt: null,
+      rewardClaimed: {},
+      presence: {
+        [user.uid]: { online: true, ts: now },
+      },
+    });
+
     let result;
     try {
       result = await dbTx(`rooms/${tid}`, (room) => {
         if (!room) {
-          return {
-            roomType: 'pvp',
-            p1: user.name,
-            p1Uid: user.uid,
-            p1Id: user.studentId,
-            p2: null,
-            p2Uid: null,
-            p2Id: null,
-            roomQuestions: shuffled,
-            currentIdx: 0,
-            questionEndsAt: now + QUESTION_TIME * 1000,
-            scores: { p1: 0, p2: 0 },
-            selections: null,
-            gameOver: false,
-            createdAt: now,
-            lastActive: now,
-            rewardClaimed: {},
-            presence: {},
-          };
+          return createFreshRoom();
         }
 
         const p1Alive = isAliveByUid(room, room.p1Uid);
         const p2Alive = isAliveByUid(room, room.p2Uid);
-
+        const noLivePlayers = !p1Alive && !p2Alive;
         const roomExpired =
           room.gameOver ||
           !room.p1Uid ||
-          (!p1Alive && !room.p2Uid) ||
+          noLivePlayers ||
           now - (room.lastActive || 0) > ROOM_TIMEOUT_MS;
 
         if (roomExpired) {
-          return {
-            roomType: 'pvp',
-            p1: user.name,
-            p1Uid: user.uid,
-            p1Id: user.studentId,
-            p2: null,
-            p2Uid: null,
-            p2Id: null,
-            roomQuestions: shuffled,
-            currentIdx: 0,
-            questionEndsAt: now + QUESTION_TIME * 1000,
-            scores: { p1: 0, p2: 0 },
-            selections: null,
-            gameOver: false,
-            createdAt: now,
-            lastActive: now,
-            rewardClaimed: {},
-            presence: {},
-          };
+          return createFreshRoom();
         }
 
         if (room.p1Uid === user.uid || room.p2Uid === user.uid) {
           return {
             ...room,
             lastActive: now,
+            presence: {
+              ...(room.presence || {}),
+              [user.uid]: { online: true, ts: now },
+            },
           };
         }
 
@@ -678,6 +695,10 @@ function App() {
             p2Uid: user.uid,
             p2Id: user.studentId,
             lastActive: now,
+            presence: {
+              ...(room.presence || {}),
+              [user.uid]: { online: true, ts: now },
+            },
           };
         }
 
@@ -1111,9 +1132,10 @@ function App() {
     await dbRootUpdate(updates).catch(console.error);
 
     if (roomId) {
-      await dbRemove(`rooms/${roomId}/presence/${user.uid}`).catch(console.error);
-      if (isAiMode) {
+      if (isAiMode || roomDataRef.current?.gameOver) {
         await dbRemove(`rooms/${roomId}`).catch(console.error);
+      } else {
+        await dbRemove(`rooms/${roomId}/presence/${user.uid}`).catch(console.error);
       }
     }
 
@@ -1690,6 +1712,7 @@ function App() {
                               background: status.bg,
                               color: 'white',
                               border: `1px solid ${status.border}`,
+                              boxShadow: `0 0 0 1px ${status.border} inset, 0 0 12px ${status.shadow || 'transparent'}`,
                               display: 'flex',
                               flexDirection: 'column',
                               alignItems: 'center',
