@@ -187,57 +187,40 @@ function App() {
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
   };
 
-  const isAliveByUid = (room, uid) => {
-    if (!uid) return false;
-    if (uid === 'ai') return true;
-    const ts = room?.presence?.[uid]?.ts || 0;
-    return ts > 0 && Date.now() - ts <= HEARTBEAT_MS * 3;
-  };
+const isAliveByUid = (room, uid) => {
+  if (!uid) return false;
+  if (uid === 'ai') return true;
+
+  const ts = room?.presence?.[uid]?.ts || 0;
+  if (!ts) return false;
+
+  return Date.now() - ts <= HEARTBEAT_MS * 3;
+};
 
   const getRoomDisplayStatus = (room) => {
-    const emptyStatus = {
-      count: 0,
-      label: '空房',
-      bg: '#2c2c2c',
-      border: '#555',
-      shadow: 'rgba(255,255,255,0.06)',
-    };
+  if (
+    !room ||
+    room.gameOver ||
+    !room.p1Uid ||
+    Date.now() - (room.lastActive || 0) > ROOM_TIMEOUT_MS
+  ) {
+    return { count: 0, label: '空房', bg: '#2c2c2c', border: '#444' };
+  }
 
-    if (!room || room.gameOver || !room.p1Uid) {
-      return emptyStatus;
-    }
+  const p1Alive = isAliveByUid(room, room.p1Uid);
+  const p2Alive = isAliveByUid(room, room.p2Uid);
+  const aliveCount = (p1Alive ? 1 : 0) + (p2Alive ? 1 : 0);
 
-    const expiredByTime = Date.now() - (room.lastActive || 0) > ROOM_TIMEOUT_MS;
-    if (expiredByTime) {
-      return emptyStatus;
-    }
+  if (aliveCount <= 0) {
+    return { count: 0, label: '空房', bg: '#2c2c2c', border: '#444' };
+  }
 
-    const p1Alive = isAliveByUid(room, room.p1Uid);
-    const p2Alive = isAliveByUid(room, room.p2Uid);
-    const aliveCount = (p1Alive ? 1 : 0) + (p2Alive ? 1 : 0);
+  if (aliveCount === 1) {
+    return { count: 1, label: '1人', bg: '#8a6d1f', border: '#ffeb3b' };
+  }
 
-    if (aliveCount <= 0) {
-      return emptyStatus;
-    }
-
-    if (aliveCount === 1) {
-      return {
-        count: 1,
-        label: '1人',
-        bg: '#8a6d1f',
-        border: '#ffeb3b',
-        shadow: 'rgba(255,235,59,0.28)',
-      };
-    }
-
-    return {
-      count: 2,
-      label: '已滿',
-      bg: '#7f1d1d',
-      border: '#ff5252',
-      shadow: 'rgba(255,82,82,0.28)',
-    };
-  };
+  return { count: 2, label: '已滿', bg: '#7f1d1d', border: '#ff5252' };
+};
 
   const recordQuestionStat = async (questionObj, isCorrect) => {
     if (!questionObj?.question) return;
@@ -710,29 +693,31 @@ function App() {
       return;
     }
 
-    const finalRoom = result.snapshot.val();
-    if (!finalRoom) {
-      alert('進房失敗，請再試一次');
-      return;
-    }
-
     const role =
-      finalRoom.p1Uid === user.uid ? 'p1' : finalRoom.p2Uid === user.uid ? 'p2' : null;
+  finalRoom.p1Uid === user.uid ? 'p1' : finalRoom.p2Uid === user.uid ? 'p2' : null;
 
-    if (!role) {
-      alert('此房間已滿或房間狀態尚未清除，請換桌或稍後再試');
-      return;
-    }
+if (!role) {
+  alert('此房間已滿或房間狀態尚未清除，請換桌或稍後再試');
+  return;
+}
 
-    await dbUpdate(`users/${user.uid}`, { hp: increment(-2) }).catch(console.error);
+await dbSet(`rooms/${tid}/presence/${user.uid}`, {
+  online: true,
+  ts: Date.now(),
+}).catch(console.error);
 
-    setMyRole(role);
-    setRoomId(tid);
-    setQuestions(finalRoom.roomQuestions || []);
-    setIsAiMode(false);
-    setP2Joined(!!finalRoom.p2Uid);
-    setView('game');
-  };
+await dbUpdate(`rooms/${tid}`, {
+  lastActive: Date.now(),
+}).catch(console.error);
+
+await dbUpdate(`users/${user.uid}`, { hp: increment(-2) }).catch(console.error);
+
+setMyRole(role);
+setRoomId(tid);
+setQuestions(finalRoom.roomQuestions || []);
+setIsAiMode(false);
+setP2Joined(!!finalRoom.p2Uid);
+setView('game');
 
   useEffect(() => {
     if (!roomId || !user?.uid) return;
