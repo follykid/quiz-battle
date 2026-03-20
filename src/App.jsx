@@ -1683,7 +1683,7 @@ function App() {
                   </div>
 
                   <div className="box">
-                    <h4 style={{ textAlign: 'center', marginTop: 0 }}>🎮 真人對戰桌 (2 HP)</h4>
+                    <h4 style={{ textAlign: 'center', marginTop: 0 }}>🎮 真人對戰桌 (2 HP) build-0320-B</h4>
                     <div
                       style={{
                         display: 'grid',
@@ -1746,6 +1746,30 @@ function App() {
               >
                 <div style={{ textAlign: 'center', marginBottom: '20px' }}>
                   <div style={{ fontSize: '3rem', fontWeight: 'bold' }}>{timeLeft}s</div>
+                   <div
+    style={{
+      textAlign: 'center',
+      color: '#888',
+      fontSize: '0.85rem',
+      marginBottom: '8px',
+    }}
+  >
+    build-0320-B | roomId: {roomId || '-'}
+  </div>
+
+  <div
+    style={{
+      display: 'flex',
+      justifyContent: 'space-around',
+      alignItems: 'center',
+      gap: '12px',
+      flexWrap: 'wrap',
+      background: '#1e1e1e',
+      padding: '15px',
+      borderRadius: '15px',
+      border: '1px solid #444',
+    }}
+  ></div>
                   <div
                     style={{
                       display: 'flex',
