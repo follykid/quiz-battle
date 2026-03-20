@@ -31,645 +31,1847 @@ const TOTAL_TABLES = 14;
 const AI_AVATAR_SRC = `data:image/svg+xml;utf8,${encodeURIComponent(`
 <svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
   <rect width="160" height="160" rx="80" fill="#1e1e1e"/>
-  <circle cx="80" cy="80" r="70" fill="#2d2d2d"/>
-  <path d="M40 60 Q80 40 120 60" fill="none" stroke="#00d4ff" stroke-width="4"/>
-  <circle cx="55" cy="85" r="8" fill="#00d4ff">
-    <animate attributeName="opacity" values="1;0.3;1" dur="2s" repeatCount="indefinite" />
-  </circle>
-  <circle cx="105" cy="85" r="8" fill="#00d4ff">
-    <animate attributeName="opacity" values="1;0.3;1" dur="2s" repeatCount="indefinite" />
-  </circle>
-  <rect x="60" y="110" width="40" height="4" fill="#00d4ff" rx="2"/>
-  <path d="M75 110 L85 110 L80 100 Z" fill="#00d4ff" />
+  <circle cx="80" cy="80" r="70" fill="#2d2d2d" stroke="#ffeb3b" stroke-width="6"/>
+  <text x="80" y="92" font-size="44" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-weight="bold">AI</text>
 </svg>
 `)}`;
 
-const App = () => {
-  // --- 狀態定義 ---
+function App() {
   const [user, setUser] = useState(null);
-  const [userData, setUserData] = useState(null);
-  const [userIdInput, setUserIdInput] = useState('');
-  const [allQuestions, setAllQuestions] = useState([]);
-  const [roomsData, setRoomsData] = useState({});
-  const [topUsers, setTopUsers] = useState([]);
+  const [loginId, setLoginId] = useState('');
+  const [loginPwd, setLoginPwd] = useState('');
+  const [view, setView] = useState('login');
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState([]);
-  const [chatInput, setChatInput] = useState('');
-  const [stats, setStats] = useState({});
+  const [inputMsg, setInputMsg] = useState('');
+  const [questionStatsList, setQuestionStatsList] = useState([]);
+  const [roomStatusMap, setRoomStatusMap] = useState({});
 
-  const [currentRoomId, setCurrentRoomId] = useState(null);
-  const [myRole, setMyRole] = useState(null); // 'p1' or 'p2'
-  const [gameState, setGameState] = useState('LOBBY'); // LOBBY, WAITING, PLAYING, FINISHED
+  const [roomId, setRoomId] = useState('');
+  const [myRole, setMyRole] = useState('viewer');
+  const [p2Joined, setP2Joined] = useState(false);
   const [isAiMode, setIsAiMode] = useState(false);
-
-  const [currentQuestions, setCurrentQuestions] = useState([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [timer, setTimer] = useState(QUESTION_TIME);
-  const [selectedIdx, setSelectedIdx] = useState(null);
-  const [reveal, setReveal] = useState(false);
+  const [questions, setQuestions] = useState([]);
+  const [allQuestions, setAllQuestions] = useState([]);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [selections, setSelections] = useState(null);
+  const [timeLeft, setTimeLeft] = useState(QUESTION_TIME);
+  const [questionEndsAt, setQuestionEndsAt] = useState(0);
+  const [gameOver, setGameOver] = useState(false);
   const [p1Score, setP1Score] = useState(0);
   const [p2Score, setP2Score] = useState(0);
-  const [p1Choice, setP1Choice] = useState(null);
-  const [p2Choice, setP2Choice] = useState(null);
-  const [p1Info, setP1Info] = useState(null);
-  const [p2Info, setP2Info] = useState(null);
+  const [p1Name, setP1Name] = useState('');
+  const [p2Name, setP2Name] = useState('');
+  const [p1Id, setP1Id] = useState('');
+  const [p2Id, setP2Id] = useState('');
+  const [roomData, setRoomData] = useState(null);
 
-  const bgMusicRef = useRef(null);
-  const lobbyMusicRef = useRef(null);
-  const timerRef = useRef(null);
-  const heartbeatRef = useRef(null);
+  const isSwitching = useRef(false);
+  const roomDataRef = useRef(null);
+  const gameOverPlayedRef = useRef(false);
+  const rewardClaimingRef = useRef(false);
+  const advanceTimerRef = useRef(null);
+  const advanceLockRef = useRef('');
 
-  // --- 初始化與監聽 ---
-  useEffect(() => {
-    Papa.parse('quiz.csv', {
-      download: true,
-      header: true,
-      complete: (results) => setAllQuestions(results.data.filter((q) => q.question)),
-    });
+  const BASE = import.meta.env.BASE_URL;
 
-    onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      if (u) {
-        const uRef = ref(db, `users/${u.uid}`);
-        onValue(uRef, (snap) => setUserData(snap.val()));
-      } else {
-        setUserData(null);
-      }
-    });
+  const lobbyBgm = useRef(new Audio(`${BASE}sounds/lobby.mp3`));
+  const gameBgm = useRef(new Audio(`${BASE}sounds/game.mp3`));
+  const aiBgm = useRef(new Audio(`${BASE}sounds/ai.mp3`));
+  const correctSfx = useRef(new Audio(`${BASE}sounds/correct.mp3`));
+  const wrongSfx = useRef(new Audio(`${BASE}sounds/wrong.mp3`));
+  const winSfx = useRef(new Audio(`${BASE}sounds/win.mp3`));
+  const loseSfx = useRef(new Audio(`${BASE}sounds/lose.mp3`));
 
-    onValue(ref(db, 'rooms'), (snap) => setRoomsData(snap.val() || {}));
-    onValue(ref(db, 'users'), (snap) => {
-      const data = snap.val() || {};
-      const sorted = Object.entries(data)
-        .map(([id, val]) => ({ id, ...val }))
-        .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0))
-        .slice(0, 15);
-      setTopUsers(sorted);
+  const stopAllAudio = useCallback(() => {
+    [lobbyBgm, gameBgm, aiBgm, correctSfx, wrongSfx, winSfx, loseSfx].forEach((s) => {
+      s.current.pause();
+      s.current.currentTime = 0;
     });
-    onValue(ref(db, 'messages'), (snap) => {
-      const data = snap.val() || {};
-      setMessages(Object.entries(data).map(([id, val]) => ({ id, ...val })).reverse().slice(0, 50));
-    });
-    onValue(ref(db, 'stats'), (snap) => setStats(snap.val() || {}));
   }, []);
 
-  // --- 音效控制 ---
-  const playSfx = (type) => {
-    const sfx = {
-      correct: 'https://actions.google.com/sounds/v1/cartoon/clink_and_glass_hit.ogg',
-      wrong: 'https://actions.google.com/sounds/v1/cartoon/boing.ogg',
-      click: 'https://actions.google.com/sounds/v1/foley/button_click.ogg',
-      win: 'https://actions.google.com/sounds/v1/human_voices/applause.ogg',
-      lose: 'https://actions.google.com/sounds/v1/horror/creepy_low_crescendo.ogg',
-    };
-    new Audio(sfx[type]).play().catch(() => {});
-  };
+  const avatarSrc = useCallback(
+    (studentId, size = 40) => {
+      if (!studentId) return `https://via.placeholder.com/${size}`;
+      if (studentId === 'ai') return AI_AVATAR_SRC;
+      return `${BASE}avatars/${String(studentId).trim()}.jpg`;
+    },
+    [BASE]
+  );
 
-  // --- 登入邏輯 ---
-  const handleLogin = async () => {
-    const student = STUDENTS.find((s) => s.id === userIdInput);
-    if (!student) return alert('學號錯誤！');
+  const dbSet = async (path, data) => {
     try {
-      const email = `${userIdInput}@${AUTH_EMAIL_DOMAIN}`;
-      const pwd = `${userIdInput}${userIdInput}`;
-      const res = await signInWithEmailAndPassword(auth, email, pwd);
-      const uRef = ref(db, `users/${res.user.uid}`);
-      const snap = await get(uRef);
-      if (!snap.exists()) {
-        await set(uRef, {
-          name: student.name,
-          id: student.id,
-          totalScore: 0,
-          hp: 20,
-          win: 0,
-          lose: 0,
-          draw: 0,
-        });
-      }
-    } catch (e) {
-      alert('登入失敗');
+      await set(ref(db, path), data);
+    } catch (err) {
+      console.error('SET FAIL ->', path, err);
+      throw err;
     }
   };
 
-  // --- 進房邏輯 (優化版) ---
-  const joinRoom = async (tableNum) => {
-    if (!userData) return;
-    const cost = 2;
-    if (userData.hp < cost) return alert('體力不足！(需要2點)');
+  const dbUpdate = async (path, data) => {
+    try {
+      await update(ref(db, path), data);
+    } catch (err) {
+      console.error('UPDATE FAIL ->', path, err);
+      throw err;
+    }
+  };
 
-    const roomRef = ref(db, `rooms/${tableNum}`);
-    const snapshot = await get(roomRef);
-    const room = snapshot.val();
-    const now = Date.now();
+  const dbRemove = async (path) => {
+    try {
+      await remove(ref(db, path));
+    } catch (err) {
+      console.error('REMOVE FAIL ->', path, err);
+      throw err;
+    }
+  };
 
-    // 判斷 P1 與 P2 是否真正活躍
-    const p1Active = room?.p1 && (now - (room.p1Status || 0) < ROOM_TIMEOUT_MS);
-    const p2Active = room?.p2 && (now - (room.p2Status || 0) < ROOM_TIMEOUT_MS);
+  const dbPush = async (path, data) => {
+    try {
+      return await push(ref(db, path), data);
+    } catch (err) {
+      console.error('PUSH FAIL ->', path, err);
+      throw err;
+    }
+  };
 
-    let role = null;
-    if (!p1Active) role = 'p1';
-    else if (!p2Active) role = 'p2';
-    else return alert('該房間已滿，請選擇其他桌次。');
+  const dbTx = async (path, updater) => {
+    try {
+      return await runTransaction(ref(db, path), updater);
+    } catch (err) {
+      console.error('TX FAIL ->', path, err);
+      throw err;
+    }
+  };
 
-    const updates = {
-      [`${role}`]: user.uid,
-      [`${role}Name`]: userData.name,
-      [`${role}Status`]: now,
-      [`${role}Score`]: 0,
-      [`${role}Choice`]: null,
+  const dbRootUpdate = async (updates) => {
+    try {
+      await update(ref(db), updates);
+    } catch (err) {
+      console.error('ROOT UPDATE FAIL ->', updates, err);
+      throw err;
+    }
+  };
+
+  const calcWinRate = (w = 0, l = 0) => {
+    const total = (w || 0) + (l || 0);
+    return total === 0 ? '0%' : `${((w / total) * 100).toFixed(1)}%`;
+  };
+
+  const formatMessageTime = (ts) => {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${hh}-${mm}-${month}-${day}`;
+  };
+
+  const shuffleQuestions = useCallback((source) => {
+    const arr = [...source];
+    for (let i = arr.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr.slice(0, QUESTION_COUNT);
+  }, []);
+
+  const questionKeyOf = (text = '') => {
+    const bytes = new TextEncoder().encode(text);
+    let binary = '';
+    bytes.forEach((b) => {
+      binary += String.fromCharCode(b);
+    });
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  };
+
+  const isAliveByUid = (room, uid) => {
+    if (!uid) return false;
+    if (uid === 'ai') return true;
+    const ts = room?.presence?.[uid]?.ts || 0;
+    return ts > 0 && Date.now() - ts <= HEARTBEAT_MS * 3;
+  };
+
+  const getRoomDisplayStatus = (room) => {
+    const emptyStatus = {
+      count: 0,
+      label: '空房',
+      bg: '#2c2c2c',
+      border: '#555',
+      shadow: 'rgba(255,255,255,0.06)',
     };
 
-    if (role === 'p1') {
-      const selected = [];
-      const shuffled = [...allQuestions].sort(() => 0.5 - Math.random());
-      for (let i = 0; i < Math.min(QUESTION_COUNT, shuffled.length); i++) {
-        selected.push(shuffled[i]);
-      }
-      updates.questions = selected;
-      updates.currentIndex = 0;
-      updates.status = 'WAITING';
+    if (!room || room.gameOver || !room.p1Uid) {
+      return emptyStatus;
     }
 
-    await update(roomRef, updates);
-    await update(ref(db, `users/${user.uid}`), { hp: increment(-cost) });
+    const expiredByTime = Date.now() - (room.lastActive || 0) > ROOM_TIMEOUT_MS;
+    if (expiredByTime) {
+      return emptyStatus;
+    }
 
-    setCurrentRoomId(tableNum);
-    setMyRole(role);
-    setGameState('WAITING');
-    setIsAiMode(false);
-    startHeartbeat(tableNum, role);
+    const p1Alive = isAliveByUid(room, room.p1Uid);
+    const p2Alive = isAliveByUid(room, room.p2Uid);
+    const aliveCount = (p1Alive ? 1 : 0) + (p2Alive ? 1 : 0);
 
-    // 斷線處理
-    onDisconnect(ref(db, `rooms/${tableNum}/${role}`)).remove();
-    onDisconnect(ref(db, `rooms/${tableNum}/${role}Status`)).remove();
+    if (aliveCount <= 0) {
+      return emptyStatus;
+    }
+
+    if (aliveCount === 1) {
+      return {
+        count: 1,
+        label: '1人',
+        bg: '#8a6d1f',
+        border: '#ffeb3b',
+        shadow: 'rgba(255,235,59,0.28)',
+      };
+    }
+
+    return {
+      count: 2,
+      label: '已滿',
+      bg: '#7f1d1d',
+      border: '#ff5252',
+      shadow: 'rgba(255,82,82,0.28)',
+    };
   };
 
-  // --- AI 練習模式 ---
-  const startAiMode = async () => {
-    if (userData.hp < 4) return alert('AI模式需要4點體力');
-    await update(ref(db, `users/${user.uid}`), { hp: increment(-4) });
-    const selected = [...allQuestions].sort(() => 0.5 - Math.random()).slice(0, QUESTION_COUNT);
-    setCurrentQuestions(selected);
-    setMyRole('p1');
-    setIsAiMode(true);
-    setGameState('PLAYING');
+  const recordQuestionStat = async (questionObj, isCorrect) => {
+    if (!questionObj?.question) return;
+    if (user?.isTeacher) return;
+
+    const key = questionKeyOf(questionObj.question);
+    const correctAnswer =
+      questionObj.options?.find((o) => o.isCorrect)?.text || '';
+
+    await dbTx(`questionStats/${key}`, (stat) => {
+      const current = stat || {
+        question: questionObj.question,
+        correctAnswer,
+        attempts: 0,
+        wrongs: 0,
+        updatedAt: 0,
+      };
+
+      const prevAttempts = current.attempts ?? current.totalCount ?? 0;
+      const prevWrongs = current.wrongs ?? current.wrongCount ?? 0;
+
+      return {
+        ...current,
+        question: questionObj.question,
+        correctAnswer: current.correctAnswer || correctAnswer,
+        attempts: prevAttempts + 1,
+        wrongs: prevWrongs + (isCorrect ? 0 : 1),
+        totalCount: prevAttempts + 1,
+        wrongCount: prevWrongs + (isCorrect ? 0 : 1),
+        updatedAt: Date.now(),
+      };
+    });
+  };
+
+  const resetGameState = useCallback(() => {
+    stopAllAudio();
+    setRoomId('');
+    setMyRole('viewer');
+    setP2Joined(false);
+    setIsAiMode(false);
+    setQuestions([]);
+    setCurrentIdx(0);
+    setSelections(null);
+    setTimeLeft(QUESTION_TIME);
+    setQuestionEndsAt(0);
+    setGameOver(false);
     setP1Score(0);
     setP2Score(0);
-    setCurrentIndex(0);
-    setTimer(QUESTION_TIME);
-  };
+    setP1Name('');
+    setP2Name('');
+    setP1Id('');
+    setP2Id('');
+    setRoomData(null);
+    isSwitching.current = false;
+    gameOverPlayedRef.current = false;
+    rewardClaimingRef.current = false;
+    advanceLockRef.current = '';
+    if (advanceTimerRef.current) {
+      clearTimeout(advanceTimerRef.current);
+      advanceTimerRef.current = null;
+    }
+  }, [stopAllAudio]);
 
-  // --- Heartbeat ---
-  const startHeartbeat = (rId, role) => {
-    if (heartbeatRef.current) clearInterval(heartbeatRef.current);
-    heartbeatRef.current = setInterval(() => {
-      update(ref(db, `rooms/${rId}`), { [`${role}Status`]: Date.now() });
-    }, HEARTBEAT_MS);
-  };
+  const roomCurrentIdx = roomData?.currentIdx ?? 0;
+  const roomGameOver = !!roomData?.gameOver;
+  const p1Answered = !!roomData?.selections?.p1;
+  const p2Answered = !!roomData?.selections?.p2;
+  const bothAnswered = p1Answered && p2Answered;
 
-  // --- 遊戲同步監聽 ---
   useEffect(() => {
-    if (!currentRoomId || isAiMode) return;
-    const roomRef = ref(db, `rooms/${currentRoomId}`);
-    const unsub = onValue(roomRef, (snap) => {
-      const data = snap.val();
-      if (!data) return;
+    roomDataRef.current = roomData;
+  }, [roomData]);
 
-      if (data.p1 && data.p2 && data.status === 'WAITING' && myRole === 'p1') {
-        update(roomRef, { status: 'PLAYING' });
+  useEffect(() => {
+    [lobbyBgm, gameBgm, aiBgm].forEach((bgm) => {
+      bgm.current.loop = true;
+      bgm.current.volume = 0.4;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+
+    stopAllAudio();
+
+    if (view === 'lobby') {
+      lobbyBgm.current.play().catch(console.error);
+    } else if (view === 'game') {
+      if (isAiMode) aiBgm.current.play().catch(console.error);
+      else gameBgm.current.play().catch(console.error);
+    }
+  }, [view, isAiMode, user, stopAllAudio]);
+
+  useEffect(() => {
+    fetch(`${BASE}quiz.csv`)
+      .then((res) => res.text())
+      .then((result) => {
+        Papa.parse(result, {
+          header: true,
+          skipEmptyLines: true,
+          complete: (res) => {
+            const formatted = res.data
+              .filter((r) => r.question)
+              .map((r) => ({
+                question: r.question,
+                category: r.category || '',
+                options: [
+                  { text: r.option1, isCorrect: String(r.correct) === '1' },
+                  { text: r.option2, isCorrect: String(r.correct) === '2' },
+                  { text: r.option3, isCorrect: String(r.correct) === '3' },
+                  { text: r.option4, isCorrect: String(r.correct) === '4' },
+                ].filter((o) => o.text),
+              }));
+            setAllQuestions(formatted);
+            setLoading(false);
+          },
+        });
+      })
+      .catch((err) => {
+        console.error(err);
+        setLoading(false);
+      });
+  }, [BASE]);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (fbUser) => {
+      if (!fbUser) {
+        setUser(null);
+        resetGameState();
+        setView('login');
+        return;
       }
 
-      setGameState(data.status);
-      setCurrentQuestions(data.questions || []);
-      setCurrentIndex(data.currentIndex || 0);
-      setP1Score(data.p1Score || 0);
-      setP2Score(data.p2Score || 0);
-      setP1Choice(data.p1Choice);
-      setP2Choice(data.p2Choice);
-      setP1Info({ name: data.p1Name, uid: data.p1 });
-      setP2Info({ name: data.p2Name, uid: data.p2 });
+      try {
+        const uid = fbUser.uid;
+        const inferredStudentId = fbUser.email?.split('@')[0] || '';
+        const student = STUDENTS.find((s) => s.id === inferredStudentId);
 
-      if (data.status === 'PLAYING') {
-        if (data.p1Choice !== undefined && data.p2Choice !== undefined && data.p1Choice !== null && data.p2Choice !== null && !reveal) {
-          triggerReveal();
+        const userRef = ref(db, `users/${uid}`);
+        const snap = await get(userRef);
+
+        const baseUserData = {
+          studentId: inferredStudentId,
+          name: student?.name || inferredStudentId,
+          totalScore: 0,
+          hp: 20,
+          wins: 0,
+          losses: 0,
+          isTeacher: inferredStudentId === 'teacher',
+        };
+
+        let finalUserData = baseUserData;
+
+        if (!snap.exists()) {
+          await dbSet(`users/${uid}`, baseUserData);
+        } else {
+          finalUserData = {
+            ...baseUserData,
+            ...snap.val(),
+            studentId: snap.val().studentId || inferredStudentId,
+            name: snap.val().name || student?.name || inferredStudentId,
+          };
         }
+
+        setUser({
+          uid,
+          ...finalUserData,
+        });
+        setView((prev) => (prev === 'login' ? 'lobby' : prev));
+      } catch (err) {
+        console.error(err);
       }
     });
+
     return () => unsub();
-  }, [currentRoomId, myRole, isAiMode, reveal]);
+  }, [resetGameState]);
 
-  // --- 計時器 ---
   useEffect(() => {
-    if (gameState !== 'PLAYING') return;
-    setTimer(QUESTION_TIME);
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      setTimer((prev) => {
-        if (prev <= 1) {
-          if (!isAiMode && !reveal) handleTimeUp();
-          if (isAiMode && !reveal) triggerRevealAi();
-          return 0;
+    if (!user?.uid) return;
+
+    const offUsers = onValue(
+      ref(db, 'users'),
+      (snap) => {
+        const val = snap.val() || {};
+        const list = Object.entries(val)
+          .map(([uid, v]) => ({ uid, ...v }))
+          .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0))
+          .slice(0, 15);
+
+        setLeaderboard(list);
+
+        const me = val[user.uid];
+        if (me) {
+          setUser((prev) => ({
+            ...prev,
+            ...me,
+            uid: prev.uid,
+            studentId: me.studentId || prev.studentId,
+          }));
         }
-        return prev - 1;
+      },
+      console.error
+    );
+
+    const offMessages = onValue(
+      ref(db, 'messages'),
+      (snap) => {
+        const val = snap.val() || {};
+        const list = Object.values(val).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        setMessages(list);
+      },
+      console.error
+    );
+
+    return () => {
+      offUsers();
+      offMessages();
+    };
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid || user?.isTeacher) {
+      setRoomStatusMap({});
+      return;
+    }
+
+    const offRooms = onValue(
+      ref(db, 'rooms'),
+      (snap) => {
+        const val = snap.val() || {};
+        const nextMap = {};
+
+        for (let i = 1; i <= TOTAL_TABLES; i += 1) {
+          const tid = `Table_${i}`;
+          nextMap[tid] = getRoomDisplayStatus(val[tid]);
+        }
+
+        setRoomStatusMap(nextMap);
+      },
+      console.error
+    );
+
+    return () => offRooms();
+  }, [user?.uid, user?.isTeacher]);
+
+  useEffect(() => {
+    if (!user?.uid || !user?.isTeacher) {
+      setQuestionStatsList([]);
+      return;
+    }
+
+    const offStats = onValue(
+      ref(db, 'questionStats'),
+      (snap) => {
+        const val = snap.val() || {};
+        const list = Object.entries(val)
+          .map(([id, v]) => {
+            const attempts = v.attempts ?? v.totalCount ?? 0;
+            const wrongs = v.wrongs ?? v.wrongCount ?? 0;
+
+            return {
+              id,
+              ...v,
+              attempts,
+              wrongs,
+              correctAnswer: v.correctAnswer || '',
+              wrongRate: attempts > 0 ? wrongs / attempts : 0,
+            };
+          })
+          .filter((v) => v.attempts > 0)
+          .sort((a, b) => {
+            if (b.wrongRate !== a.wrongRate) return b.wrongRate - a.wrongRate;
+            if (b.wrongs !== a.wrongs) return b.wrongs - a.wrongs;
+            return b.attempts - a.attempts;
+          })
+          .slice(0, 20);
+
+        setQuestionStatsList(list);
+      },
+      console.error
+    );
+
+    return () => offStats();
+  }, [user?.uid, user?.isTeacher]);
+
+  const handleLogin = async () => {
+    const student = STUDENTS.find((s) => s.id === loginId);
+
+    if (!student) {
+      alert('找不到此學號！');
+      return;
+    }
+
+    const email = `${loginId}@${AUTH_EMAIL_DOMAIN}`;
+
+    try {
+      const cred = await signInWithEmailAndPassword(auth, email, loginPwd);
+      const uid = cred.user.uid;
+      const userRef = ref(db, `users/${uid}`);
+      const snap = await get(userRef);
+
+      const baseUserData = {
+        studentId: student.id,
+        name: student.name,
+        totalScore: 0,
+        hp: 20,
+        wins: 0,
+        losses: 0,
+        isTeacher: student.id === 'teacher',
+      };
+
+      let finalUserData = baseUserData;
+
+      if (!snap.exists()) {
+        await dbSet(`users/${uid}`, baseUserData);
+      } else {
+        finalUserData = {
+          ...baseUserData,
+          ...snap.val(),
+        };
+
+        await dbUpdate(`users/${uid}`, {
+          studentId: student.id,
+          name: student.name,
+          isTeacher: student.id === 'teacher',
+        });
+      }
+
+      resetGameState();
+      setUser({
+        uid,
+        ...finalUserData,
       });
-    }, 1000);
-    return () => clearInterval(timerRef.current);
-  }, [currentIndex, gameState]);
-
-  const handleTimeUp = async () => {
-    if (isAiMode) return;
-    const roomRef = ref(db, `rooms/${currentRoomId}`);
-    const snap = await get(roomRef);
-    const data = snap.val();
-    if (myRole === 'p1' && data.p1Choice === null) update(roomRef, { p1Choice: -1 });
-    if (myRole === 'p2' && data.p2Choice === null) update(roomRef, { p2Choice: -1 });
-  };
-
-  const handleChoice = async (idx) => {
-    if (reveal || selectedIdx !== null) return;
-    setSelectedIdx(idx);
-    playSfx('click');
-    if (isAiMode) {
-      setP1Choice(idx);
-      const aiChoice = Math.random() < 0.6 ? parseInt(currentQuestions[currentIndex].answer) - 1 : Math.floor(Math.random() * 4);
-      setP2Choice(aiChoice);
-      triggerRevealAi();
-    } else {
-      update(ref(db, `rooms/${currentRoomId}`), { [`${myRole}Choice`]: idx });
+      setView('lobby');
+    } catch (err) {
+      console.error(err);
+      alert('學號或密碼錯誤！');
     }
   };
 
-  const triggerReveal = () => {
-    setReveal(true);
-    setTimeout(async () => {
-      if (myRole === 'p1') {
-        const roomRef = ref(db, `rooms/${currentRoomId}`);
-        const snap = await get(roomRef);
-        const data = snap.val();
-        const q = data.questions[data.currentIndex];
-        const ans = parseInt(q.answer) - 1;
+  const startAiGame = async () => {
+    if (Number(user?.hp) < 4) {
+      alert('HP 不足 4 點！');
+      return;
+    }
+    if (!allQuestions.length) return;
 
-        let newP1 = data.p1Score || 0;
-        let newP2 = data.p2Score || 0;
+    const tid = `AI_${user.studentId}_${Date.now()}`;
+    const shuffled = shuffleQuestions(allQuestions);
+    const now = Date.now();
 
-        if (data.p1Choice === ans) newP1 += (timer > 13 ? 3 : timer > 7 ? 2 : 1);
-        if (data.p2Choice === ans) newP2 += (timer > 13 ? 3 : timer > 7 ? 2 : 1);
+    await dbSet(`rooms/${tid}`, {
+      roomType: 'ai',
+      p1: user.name,
+      p1Uid: user.uid,
+      p1Id: user.studentId,
+      p2: '🤖 練習用 AI',
+      p2Uid: 'ai',
+      p2Id: 'ai',
+      roomQuestions: shuffled,
+      currentIdx: 0,
+      questionEndsAt: now + QUESTION_TIME * 1000,
+      scores: { p1: 0, p2: 0 },
+      selections: null,
+      gameOver: false,
+      createdAt: now,
+      lastActive: now,
+      rewardClaimed: {},
+      presence: {},
+    }).catch(console.error);
 
-        const isLast = data.currentIndex >= QUESTION_COUNT - 1;
-        update(roomRef, {
-          p1Score: newP1,
-          p2Score: newP2,
-          p1Choice: null,
-          p2Choice: null,
-          currentIndex: isLast ? data.currentIndex : data.currentIndex + 1,
-          status: isLast ? 'FINISHED' : 'PLAYING',
-        });
+    await dbUpdate(`users/${user.uid}`, { hp: increment(-4) }).catch(console.error);
 
-        // 統計
-        const sRef = ref(db, `stats/${q.id || 'q'}`);
-        if (data.p1Choice !== ans) update(sRef, { wrong: increment(1), text: q.question });
-        if (data.p2Choice !== ans) update(sRef, { wrong: increment(1), text: q.question });
-        update(sRef, { total: increment(2) });
-      }
-      setReveal(false);
-      setSelectedIdx(null);
-    }, REVEAL_MS);
+    setQuestions(shuffled);
+    setMyRole('p1');
+    setRoomId(tid);
+    setIsAiMode(true);
+    setP2Joined(true);
+    setP1Name(user.name);
+    setP1Id(user.studentId);
+    setP2Name('🤖 練習用 AI');
+    setP2Id('ai');
+    setView('game');
   };
 
-  const triggerRevealAi = () => {
-    setReveal(true);
-    setTimeout(() => {
-      const q = currentQuestions[currentIndex];
-      const ans = parseInt(q.answer) - 1;
-      if (p1Choice === ans) setP1Score((s) => s + (timer > 13 ? 3 : timer > 7 ? 2 : 1));
-      if (p2Choice === ans) setP2Score((s) => s + (timer > 13 ? 3 : timer > 7 ? 2 : 1));
+  const handleJoinTable = async (num) => {
+    if (Number(user?.hp) < 2) {
+      alert('HP 不足 2 點！');
+      return;
+    }
+    if (!allQuestions.length) return;
 
-      if (currentIndex >= QUESTION_COUNT - 1) {
-        setGameState('FINISHED');
-      } else {
-        setCurrentIndex((i) => i + 1);
-        setP1Choice(null);
-        setP2Choice(null);
-        setSelectedIdx(null);
+    const tid = `Table_${num}`;
+    const shuffled = shuffleQuestions(allQuestions);
+    const now = Date.now();
+
+    const createFreshRoom = () => ({
+      roomType: 'pvp',
+      p1: user.name,
+      p1Uid: user.uid,
+      p1Id: user.studentId,
+      p2: null,
+      p2Uid: null,
+      p2Id: null,
+      roomQuestions: shuffled,
+      currentIdx: 0,
+      questionEndsAt: now + QUESTION_TIME * 1000,
+      scores: { p1: 0, p2: 0 },
+      selections: null,
+      gameOver: false,
+      createdAt: now,
+      lastActive: now,
+      finishedAt: null,
+      rewardClaimed: {},
+      presence: {
+        [user.uid]: { online: true, ts: now },
+      },
+    });
+
+    let result;
+    try {
+      result = await dbTx(`rooms/${tid}`, (room) => {
+        if (!room) {
+          return createFreshRoom();
+        }
+
+        const p1Alive = isAliveByUid(room, room.p1Uid);
+        const p2Alive = isAliveByUid(room, room.p2Uid);
+        const noLivePlayers = !p1Alive && !p2Alive;
+        const roomExpired =
+          room.gameOver ||
+          !room.p1Uid ||
+          noLivePlayers ||
+          now - (room.lastActive || 0) > ROOM_TIMEOUT_MS;
+
+        if (roomExpired) {
+          return createFreshRoom();
+        }
+
+        if (room.p1Uid === user.uid || room.p2Uid === user.uid) {
+          return {
+            ...room,
+            lastActive: now,
+            presence: {
+              ...(room.presence || {}),
+              [user.uid]: { online: true, ts: now },
+            },
+          };
+        }
+
+        if (!room.p2Uid || !p2Alive) {
+          return {
+            ...room,
+            p2: user.name,
+            p2Uid: user.uid,
+            p2Id: user.studentId,
+            lastActive: now,
+            presence: {
+              ...(room.presence || {}),
+              [user.uid]: { online: true, ts: now },
+            },
+          };
+        }
+
+        return room;
+      });
+    } catch (err) {
+      console.error(err);
+      alert('進房失敗，請再試一次');
+      return;
+    }
+
+    const finalRoom = result.snapshot.val();
+    if (!finalRoom) {
+      alert('進房失敗，請再試一次');
+      return;
+    }
+
+    const role =
+      finalRoom.p1Uid === user.uid ? 'p1' : finalRoom.p2Uid === user.uid ? 'p2' : null;
+
+    if (!role) {
+      alert('此房間已滿或房間狀態尚未清除，請換桌或稍後再試');
+      return;
+    }
+
+    await dbUpdate(`users/${user.uid}`, { hp: increment(-2) }).catch(console.error);
+
+    setMyRole(role);
+    setRoomId(tid);
+    setQuestions(finalRoom.roomQuestions || []);
+    setIsAiMode(false);
+    setP2Joined(!!finalRoom.p2Uid);
+    setView('game');
+  };
+
+  useEffect(() => {
+    if (!roomId || !user?.uid) return;
+
+    const roomRef = ref(db, `rooms/${roomId}`);
+
+    const offRoom = onValue(
+      roomRef,
+      (snap) => {
+        const data = snap.val();
+
+        if (!data) {
+          if (view === 'game') {
+            stopAllAudio();
+            resetGameState();
+            setView('lobby');
+          }
+          return;
+        }
+
+        const roleFromDb =
+          data.p1Uid === user.uid ? 'p1' : data.p2Uid === user.uid ? 'p2' : null;
+
+        if (!roleFromDb) {
+          stopAllAudio();
+          resetGameState();
+          setView('lobby');
+          return;
+        }
+
+        setRoomData(data);
+        setMyRole(roleFromDb);
+        setP1Name(data.p1 || '');
+        setP1Id(data.p1Id || '');
+        setP2Name(data.p2 || '等待中...');
+        setP2Id(data.p2Id || '');
+        setP2Joined(!!data.p2Uid);
+        setSelections(data.selections || null);
+        setCurrentIdx(data.currentIdx || 0);
+        setQuestionEndsAt(data.questionEndsAt || 0);
+        setGameOver(!!data.gameOver);
+
+        if (data.scores) {
+          setP1Score(data.scores.p1 || 0);
+          setP2Score(data.scores.p2 || 0);
+        }
+
+        if (data.roomQuestions) {
+          setQuestions(data.roomQuestions);
+        }
+
+        if (data.gameOver && !gameOverPlayedRef.current) {
+          const myFinal = roleFromDb === 'p1' ? data.scores?.p1 || 0 : data.scores?.p2 || 0;
+          const oppFinal = roleFromDb === 'p1' ? data.scores?.p2 || 0 : data.scores?.p1 || 0;
+
+          [aiBgm, gameBgm].forEach((b) => b.current.pause());
+
+          if (myFinal > oppFinal) winSfx.current.play().catch(console.error);
+          else loseSfx.current.play().catch(console.error);
+
+          gameOverPlayedRef.current = true;
+        }
+
+        if (!data.gameOver) {
+          gameOverPlayedRef.current = false;
+        }
+      },
+      console.error
+    );
+
+    return () => offRoom();
+  }, [roomId, user?.uid, view, resetGameState, stopAllAudio]);
+
+  useEffect(() => {
+    if (!roomId || !user?.uid || view !== 'game') return;
+
+    const presencePath = `rooms/${roomId}/presence/${user.uid}`;
+    const presenceRef = ref(db, presencePath);
+    const disconnectOp = onDisconnect(presenceRef);
+
+    dbSet(presencePath, { online: true, ts: Date.now() }).catch(console.error);
+    disconnectOp.remove().catch(console.error);
+
+    if (isAiMode) {
+      return () => {
+        disconnectOp.cancel().catch(console.error);
+        dbRemove(presencePath).catch(console.error);
+      };
+    }
+
+    const timer = setInterval(() => {
+      dbSet(presencePath, { online: true, ts: Date.now() }).catch(console.error);
+      dbUpdate(`rooms/${roomId}`, { lastActive: Date.now() }).catch(console.error);
+    }, HEARTBEAT_MS);
+
+    return () => {
+      clearInterval(timer);
+      disconnectOp.cancel().catch(console.error);
+      dbRemove(presencePath).catch(console.error);
+    };
+  }, [roomId, user?.uid, view, isAiMode]);
+
+  useEffect(() => {
+    if (!questionEndsAt || gameOver || (!p2Joined && !isAiMode)) {
+      setTimeLeft(QUESTION_TIME);
+      return;
+    }
+
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((questionEndsAt - Date.now()) / 1000));
+      setTimeLeft(left);
+    };
+
+    tick();
+    const timer = setInterval(tick, 250);
+    return () => clearInterval(timer);
+  }, [questionEndsAt, gameOver, p2Joined, isAiMode]);
+
+  const advanceToNextQuestion = useCallback(
+    async (expectedIdx) => {
+      if (!roomId) return;
+
+      try {
+        await dbTx(`rooms/${roomId}`, (room) => {
+          if (!room || room.gameOver) return room;
+          if ((room.currentIdx || 0) !== expectedIdx) return room;
+          if (!room.selections?.p1 || !room.selections?.p2) return room;
+
+          const nextIdx = expectedIdx + 1;
+
+          if (nextIdx >= (room.roomQuestions?.length || QUESTION_COUNT)) {
+            return {
+              ...room,
+              gameOver: true,
+              finishedAt: Date.now(),
+              lastActive: Date.now(),
+            };
+          }
+
+          return {
+            ...room,
+            currentIdx: nextIdx,
+            selections: null,
+            questionEndsAt: Date.now() + QUESTION_TIME * 1000,
+            lastActive: Date.now(),
+          };
+        });
+      } catch (err) {
+        console.error('advanceToNextQuestion failed:', err);
       }
-      setReveal(false);
+    },
+    [roomId]
+  );
+
+  useEffect(() => {
+    if (!roomId || myRole === 'viewer' || !roomData || roomGameOver) return;
+    if (!bothAnswered) return;
+
+    const key = `${roomId}-${roomCurrentIdx}`;
+    if (advanceLockRef.current === key) return;
+
+    advanceLockRef.current = key;
+    isSwitching.current = true;
+
+    const timerId = setTimeout(async () => {
+      advanceTimerRef.current = null;
+      await advanceToNextQuestion(roomCurrentIdx);
     }, REVEAL_MS);
+
+    advanceTimerRef.current = timerId;
+
+    return () => {
+      clearTimeout(timerId);
+
+      if (advanceTimerRef.current === timerId) {
+        advanceTimerRef.current = null;
+      }
+
+      if ((roomDataRef.current?.currentIdx ?? 0) === roomCurrentIdx) {
+        isSwitching.current = false;
+        advanceLockRef.current = '';
+      }
+    };
+  }, [roomId, myRole, roomCurrentIdx, roomGameOver, bothAnswered, advanceToNextQuestion, roomData]);
+
+  useEffect(() => {
+    advanceLockRef.current = '';
+    isSwitching.current = false;
+
+    if (advanceTimerRef.current) {
+      clearTimeout(advanceTimerRef.current);
+      advanceTimerRef.current = null;
+    }
+  }, [currentIdx, roomId]);
+
+  useEffect(() => {
+    if (!roomId || myRole === 'viewer' || !roomData || roomGameOver) return;
+    if (isSwitching.current) return;
+    if (!questionEndsAt) return;
+    if (bothAnswered) return;
+
+    const myAnswered = myRole === 'p1' ? p1Answered : p2Answered;
+    const oppUid = myRole === 'p1' ? roomData.p2Uid : roomData.p1Uid;
+    const oppAlive = isAliveByUid(roomData, oppUid);
+    const shouldForceAdvance = myAnswered && oppUid && !oppAlive;
+
+    if (!shouldForceAdvance && Date.now() < questionEndsAt) return;
+
+    isSwitching.current = true;
+
+    dbTx(`rooms/${roomId}`, (room) => {
+      if (!room || room.gameOver) return room;
+
+      const roomMyRole =
+        room.p1Uid === user.uid ? 'p1' : room.p2Uid === user.uid ? 'p2' : null;
+      if (!roomMyRole) return room;
+
+      const roomMyAnswered = roomMyRole === 'p1' ? !!room.selections?.p1 : !!room.selections?.p2;
+      const roomOppUid = roomMyRole === 'p1' ? room.p2Uid : room.p1Uid;
+      const roomOppAlive = isAliveByUid(room, roomOppUid);
+
+      if (!roomMyAnswered && Date.now() < (room.questionEndsAt || 0)) return room;
+      if (roomMyAnswered && roomOppAlive && Date.now() < (room.questionEndsAt || 0)) return room;
+
+      const alreadyBothAnswered = !!room.selections?.p1 && !!room.selections?.p2;
+      if (alreadyBothAnswered) return room;
+
+      const nextSelections = { ...(room.selections || {}) };
+
+      if (!nextSelections.p1) {
+        nextSelections.p1 = { text: '', isCorrect: false, timedOut: true };
+      }
+      if (!nextSelections.p2) {
+        nextSelections.p2 = { text: '', isCorrect: false, timedOut: true };
+      }
+
+      const nextIdx = (room.currentIdx || 0) + 1;
+
+      if (nextIdx >= (room.roomQuestions?.length || QUESTION_COUNT)) {
+        return {
+          ...room,
+          selections: nextSelections,
+          gameOver: true,
+          finishedAt: Date.now(),
+          lastActive: Date.now(),
+        };
+      }
+
+      return {
+        ...room,
+        selections: null,
+        currentIdx: nextIdx,
+        questionEndsAt: Date.now() + QUESTION_TIME * 1000,
+        lastActive: Date.now(),
+      };
+    })
+      .catch(console.error)
+      .finally(() => {
+        isSwitching.current = false;
+      });
+  }, [
+    roomId,
+    myRole,
+    roomData,
+    roomGameOver,
+    questionEndsAt,
+    bothAnswered,
+    p1Answered,
+    p2Answered,
+    user?.uid,
+  ]);
+
+  useEffect(() => {
+    if (!isAiMode || !roomId || roomGameOver) return;
+    if (!p1Answered || p2Answered) return;
+
+    const expectedIdx = roomCurrentIdx;
+
+    const timer = setTimeout(async () => {
+      const q = roomDataRef.current?.roomQuestions?.[expectedIdx];
+      if (!q) return;
+
+      const correctOpt = q.options.find((o) => o.isCorrect);
+      const wrongOpts = q.options.filter((o) => !o.isCorrect);
+      const aiOpt =
+        Math.random() < 0.6
+          ? correctOpt
+          : wrongOpts[Math.floor(Math.random() * wrongOpts.length)] || correctOpt;
+
+      await dbTx(`rooms/${roomId}`, (room) => {
+        if (!room || room.gameOver) return room;
+        if ((room.currentIdx || 0) !== expectedIdx) return room;
+        if (room.selections?.p2) return room;
+
+        const gained = aiOpt?.isCorrect ? 10 : 0;
+
+        return {
+          ...room,
+          selections: {
+            ...(room.selections || {}),
+            p2: {
+              text: aiOpt?.text || '',
+              isCorrect: !!aiOpt?.isCorrect,
+            },
+          },
+          scores: {
+            ...(room.scores || { p1: 0, p2: 0 }),
+            p2: (room.scores?.p2 || 0) + gained,
+          },
+          lastActive: Date.now(),
+        };
+      }).catch(console.error);
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [isAiMode, roomId, roomGameOver, roomCurrentIdx, p1Answered, p2Answered]);
+
+  const onSelect = async (opt) => {
+    if (!roomId || !user?.uid) return;
+    if (gameOver) return;
+    if (!p2Joined && !isAiMode) return;
+    if (selections?.[myRole]) return;
+
+    if (opt.isCorrect) {
+      correctSfx.current.currentTime = 0;
+      correctSfx.current.play().catch(console.error);
+    } else {
+      wrongSfx.current.currentTime = 0;
+      wrongSfx.current.play().catch(console.error);
+    }
+
+    const result = await dbTx(`rooms/${roomId}`, (room) => {
+      if (!room || room.gameOver) return room;
+
+      const role =
+        room.p1Uid === user.uid ? 'p1' : room.p2Uid === user.uid ? 'p2' : null;
+
+      if (!role) return room;
+      if (room.selections?.[role]) return room;
+      if (Date.now() > (room.questionEndsAt || 0)) return room;
+
+      const left = Math.max(
+        0,
+        Math.ceil(((room.questionEndsAt || 0) - Date.now()) / 1000)
+      );
+
+      const gained = opt.isCorrect
+        ? (left >= 13 ? 20 : 10) + Math.floor(left * 0.5)
+        : 0;
+
+      return {
+        ...room,
+        selections: {
+          ...(room.selections || {}),
+          [role]: {
+            text: opt.text,
+            isCorrect: !!opt.isCorrect,
+          },
+        },
+        scores: {
+          ...(room.scores || { p1: 0, p2: 0 }),
+          [role]: (room.scores?.[role] || 0) + gained,
+        },
+        lastActive: Date.now(),
+      };
+    }).catch(console.error);
+
+    if (result?.committed) {
+      await recordQuestionStat(questions[currentIdx], !!opt.isCorrect).catch(console.error);
+    }
   };
 
   const finishGameAndGoLobby = async () => {
-    if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+    if (!user?.uid || rewardClaimingRef.current) return;
+    rewardClaimingRef.current = true;
+
     const myScore = myRole === 'p1' ? p1Score : p2Score;
     const oppScore = myRole === 'p1' ? p2Score : p1Score;
+    const isWin = myScore > oppScore;
 
-    let winBonus = 0;
-    let resultKey = 'draw';
-    if (myScore > oppScore) {
-      winBonus = 5;
-      resultKey = 'win';
-      playSfx('win');
-    } else if (myScore < oppScore) {
-      resultKey = 'lose';
-      playSfx('lose');
+    let rewardPoints = 0;
+    if (isAiMode) {
+      rewardPoints = isWin ? Math.floor(myScore * 0.5) : Math.floor(myScore * 0.3);
+    } else {
+      rewardPoints = isWin ? myScore : Math.floor(myScore * 0.8);
     }
 
-    await update(ref(db, `users/${user.uid}`), {
-      totalScore: increment(myScore),
-      hp: increment(winBonus),
-      [resultKey]: increment(1),
-    });
+    const updates = {};
+    updates[`users/${user.uid}/totalScore`] = increment(rewardPoints);
 
     if (!isAiMode) {
-      const rRef = ref(db, `rooms/${currentRoomId}`);
-      await update(rRef, { [myRole]: null, [`${myRole}Name`]: null });
-      const snap = await get(rRef);
-      if (!snap.val().p1 && !snap.val().p2) remove(rRef);
+      updates[`users/${user.uid}/wins`] = increment(isWin ? 1 : 0);
+      updates[`users/${user.uid}/losses`] = increment(isWin ? 0 : 1);
+      if (isWin) updates[`users/${user.uid}/hp`] = increment(5);
     }
 
-    setCurrentRoomId(null);
-    setMyRole(null);
-    setGameState('LOBBY');
+    await dbRootUpdate(updates).catch(console.error);
+
+    if (roomId) {
+      await dbRemove(`rooms/${roomId}`).catch(console.error);
+    }
+
+    stopAllAudio();
+    resetGameState();
+    setView('lobby');
   };
 
-  const sendChat = () => {
-    if (!chatInput.trim()) return;
-    push(ref(db, 'messages'), {
-      name: userData.name,
-      text: chatInput,
-      ts: Date.now(),
-    });
-    setChatInput('');
+  const sendMessage = async () => {
+    if (!user || !inputMsg.trim()) return;
+
+    await dbPush('messages', {
+      user: user.name,
+      text: inputMsg.trim(),
+      timestamp: Date.now(),
+    }).catch(console.error);
+
+    setInputMsg('');
   };
 
-  // --- Render 邏輯 ---
-  if (!user) {
+  const renderMessageBoard = (compact = false) => (
+    <div
+      className="box"
+      style={{
+        marginTop: compact ? '12px' : 0,
+      }}
+    >
+      <h4 style={{ marginTop: 0 }}>💬 留言板 (最新在上方)</h4>
+      <div
+        className="msg-box"
+        style={{
+          height: compact ? '220px' : '300px',
+        }}
+      >
+        {messages
+          .slice()
+          .reverse()
+          .map((m, i) => (
+            <div
+              key={`${m.timestamp || 0}-${i}`}
+              style={{
+                marginBottom: '8px',
+                borderBottom: '1px solid #222',
+                paddingBottom: '4px',
+                wordBreak: 'break-word',
+                lineHeight: 1.6,
+              }}
+            >
+              <span>
+                <b style={{ color: '#4caf50' }}>{m.user}</b>: {m.text}
+                <span style={{ color: '#888', marginLeft: '8px', fontSize: '0.85em' }}>
+                  {formatMessageTime(m.timestamp)}
+                </span>
+              </span>
+            </div>
+          ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: '5px' }}>
+        <input
+          value={inputMsg}
+          onChange={(e) => setInputMsg(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') sendMessage();
+          }}
+          style={{
+            flex: 1,
+            padding: '10px',
+            borderRadius: '8px',
+            background: '#333',
+            border: 'none',
+            color: 'white',
+            minWidth: 0,
+          }}
+          placeholder="輸入聊天..."
+        />
+        <button
+          onClick={sendMessage}
+          className="btn"
+          style={{ background: '#4caf50', color: 'white', flexShrink: 0 }}
+        >
+          發送
+        </button>
+      </div>
+    </div>
+  );
+
+  if (loading) {
     return (
-      <div style={styles.container}>
-        <div style={styles.loginCard}>
-          <h1 style={{ color: '#00d4ff' }}>SSHE Quiz PvP</h1>
-          <input
-            className="input"
-            placeholder="輸入學號 (如 112001)"
-            value={userIdInput}
-            onChange={(e) => setUserIdInput(e.target.value)}
-          />
-          <button className="btn" onClick={handleLogin} style={{ background: '#00d4ff', color: '#000' }}>
-            進入大廳
-          </button>
-        </div>
+      <div style={{ color: 'white', textAlign: 'center', marginTop: '50px' }}>
+        載入中...
       </div>
     );
   }
 
-  const renderLobby = () => (
-    <div style={styles.lobbyContainer}>
-      <header style={styles.header}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-          <div style={styles.avatar}>{userData?.name?.[0]}</div>
-          <div>
-            <div style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>{userData?.name}</div>
-            <div style={{ color: '#aaa', fontSize: '0.9rem' }}>積分: {userData?.totalScore} | HP: {userData?.hp}</div>
-          </div>
-        </div>
-        <button className="btn" onClick={() => signOut(auth)} style={{ background: '#ff5252', width: 'auto', padding: '8px 15px' }}>
-          登出
-        </button>
-      </header>
+  return (
+    <div className="safe-container">
+      <style>{`
+        html, body, #root {
+          margin: 0;
+          padding: 0;
+          min-height: 100%;
+          background: #121212;
+          font-family: sans-serif;
+          color: white;
+          overflow-x: hidden;
+          overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
+        }
 
-      <div style={styles.lobbyGrid}>
-        <div style={styles.mainArea}>
-          <div style={styles.sectionTitle}>戰鬥桌次</div>
-          <div style={styles.tableGrid}>
-            {Array.from({ length: TOTAL_TABLES }, (_, i) => i + 1).map((tNum) => {
-              const r = roomsData[tNum];
-              const now = Date.now();
-              // 判定 P1, P2 是否活躍
-              const p1Active = r?.p1 && (now - (r.p1Status || 0) < ROOM_TIMEOUT_MS);
-              const p2Active = r?.p2 && (now - (r.p2Status || 0) < ROOM_TIMEOUT_MS);
-              const count = (p1Active ? 1 : 0) + (p2Active ? 1 : 0);
+        .safe-container {
+          min-height: 100dvh;
+          width: 100%;
+          overflow-x: hidden;
+          overflow-y: auto;
+          box-sizing: border-box;
+        }
 
-              // 顏色邏輯
-              let bgColor = '#4caf50'; // 0人: 綠色
-              if (count === 1) bgColor = '#ff9800'; // 1人: 橘色
-              if (count === 2) bgColor = '#f44336'; // 2人: 紅色
+        .box {
+          background: #1e1e1e;
+          padding: 20px;
+          border-radius: 15px;
+          border: 1px solid #333;
+          margin-bottom: 10px;
+          box-sizing: border-box;
+        }
 
-              return (
-                <button
-                  key={tNum}
-                  className="btn"
-                  onClick={() => joinRoom(tNum)}
-                  disabled={count >= 2}
-                  style={{
-                    background: bgColor,
-                    margin: '5px',
-                    width: '90px',
-                    height: '70px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    opacity: count >= 2 ? 0.6 : 1,
-                    cursor: count >= 2 ? 'not-allowed' : 'pointer',
-                    border: 'none',
-                    borderRadius: '12px',
-                    boxShadow: '0 4px 10px rgba(0,0,0,0.3)',
-                    transition: 'transform 0.2s',
-                  }}
-                >
-                  <span style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{tNum}號桌</span>
-                  <span style={{ fontSize: '0.8rem' }}>{count}/2 人</span>
-                </button>
-              );
-            })}
-          </div>
+        .btn {
+          padding: 12px;
+          border-radius: 8px;
+          border: none;
+          font-weight: bold;
+          cursor: pointer;
+        }
 
-          <div style={{ marginTop: '20px' }}>
-            <button className="btn" onClick={startAiMode} style={{ background: 'linear-gradient(45deg, #00d4ff, #0055ff)' }}>
-              🤖 啟動 AI 練習模式 (消耗 4 HP)
+        .avatar {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          object-fit: cover;
+          border: 2px solid #444;
+          background: #333;
+          flex-shrink: 0;
+        }
+
+        .avatar-lg {
+          width: 80px;
+          height: 80px;
+          border-radius: 50%;
+          object-fit: cover;
+          border: 3px solid #ffeb3b;
+          background: #333;
+          flex-shrink: 0;
+        }
+
+        .rank-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 0.85rem;
+          table-layout: auto;
+        }
+
+        .rank-table th {
+          text-align: left;
+          color: #888;
+          border-bottom: 1px solid #444;
+          padding: 5px 8px;
+          white-space: nowrap;
+        }
+
+        .rank-table td {
+          padding: 8px 8px;
+          border-bottom: 1px solid #222;
+          vertical-align: middle;
+          white-space: nowrap;
+        }
+
+        .lobby-layout {
+          display: grid;
+          grid-template-columns: 380px 1fr;
+          gap: 20px;
+          max-width: 1260px;
+          margin: 0 auto;
+          padding: 10px;
+          box-sizing: border-box;
+        }
+
+        header {
+          position: sticky;
+          top: 0;
+          z-index: 1000;
+          background: #1e1e1e;
+          padding: 10px 15px;
+          border-bottom: 2px solid #333;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          box-sizing: border-box;
+        }
+
+        .msg-box {
+          height: 300px;
+          overflow-y: auto;
+          background: #111;
+          padding: 15px;
+          border-radius: 10px;
+          margin-bottom: 10px;
+          border: 1px solid #333;
+          display: flex;
+          flex-direction: column;
+          box-sizing: border-box;
+        }
+
+        .option-btn {
+          padding: 18px;
+          font-size: 1.1rem;
+          border-radius: 12px;
+          border: none;
+          color: white;
+          background: #333;
+          margin-bottom: 10px;
+          width: 100%;
+          text-align: left;
+          cursor: pointer;
+          box-sizing: border-box;
+          word-break: break-word;
+        }
+
+        input, button, textarea, select {
+          font-size: 16px;
+        }
+
+        @media (max-width: 980px) {
+          .lobby-layout {
+            grid-template-columns: 1fr;
+            gap: 12px;
+            padding: 8px;
+          }
+        }
+
+        @media (max-width: 850px) {
+          .box {
+            padding: 14px;
+            border-radius: 12px;
+          }
+
+          .avatar-lg {
+            width: 64px;
+            height: 64px;
+          }
+
+          .rank-table {
+            font-size: 0.78rem;
+          }
+
+          .option-btn {
+            padding: 14px;
+            font-size: 1rem;
+          }
+        }
+
+        @media (max-width: 480px) {
+          header {
+            padding: 10px;
+          }
+
+          .box {
+            padding: 12px;
+          }
+
+          .msg-box {
+            height: 220px;
+            padding: 10px;
+          }
+
+          .avatar {
+            width: 34px;
+            height: 34px;
+          }
+
+          .avatar-lg {
+            width: 56px;
+            height: 56px;
+          }
+
+          .rank-table {
+            font-size: 0.72rem;
+          }
+
+          .option-btn {
+            padding: 12px;
+            font-size: 0.95rem;
+          }
+        }
+      `}</style>
+
+      {view === 'login' && (
+        <div
+          style={{
+            padding: '40px 12px',
+            textAlign: 'center',
+            width: '100%',
+            boxSizing: 'border-box',
+            overflowX: 'hidden',
+          }}
+        >
+          <h1>⚔️ 知識對戰系統</h1>
+          <div
+            className="box"
+            style={{
+              maxWidth: '360px',
+              width: '100%',
+              margin: '0 auto',
+              boxSizing: 'border-box',
+            }}
+          >
+            <div
+              style={{
+                background: '#111',
+                border: '1px solid #333',
+                borderRadius: '10px',
+                padding: '12px 14px',
+                marginBottom: '18px',
+                lineHeight: 1.8,
+                color: '#ffeb3b',
+                fontWeight: 'bold',
+              }}
+            >
+              <div>登入請輸入「學號」</div>
+              <div>密碼都是「111111」</div>
+            </div>
+
+            <input
+              placeholder="學號"
+              value={loginId}
+              onChange={(e) => setLoginId(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '12px',
+                marginBottom: '15px',
+                background: '#111',
+                color: 'white',
+                border: '1px solid #444',
+                borderRadius: '8px',
+                boxSizing: 'border-box',
+              }}
+            />
+            <input
+              type="password"
+              placeholder="密碼"
+              value={loginPwd}
+              onChange={(e) => setLoginPwd(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '12px',
+                marginBottom: '25px',
+                background: '#111',
+                color: 'white',
+                border: '1px solid #444',
+                borderRadius: '8px',
+                boxSizing: 'border-box',
+              }}
+            />
+            <button
+              className="btn"
+              onClick={handleLogin}
+              style={{ width: '100%', background: '#4caf50', color: 'white' }}
+            >
+              登入
             </button>
           </div>
-
-          <div style={{ marginTop: '30px' }}>
-            <div style={styles.sectionTitle}>即時留言板</div>
-            <div style={styles.chatBox}>
-              <div style={styles.chatMsgs}>
-                {messages.map((m) => (
-                  <div key={m.id} style={{ marginBottom: '8px' }}>
-                    <span style={{ color: '#00d4ff', fontWeight: 'bold' }}>{m.name}: </span>
-                    <span>{m.text}</span>
-                  </div>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <input
-                  className="input"
-                  style={{ margin: 0 }}
-                  value={chatInput}
-                  placeholder="說點什麼..."
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && sendChat()}
-                />
-                <button className="btn" onClick={sendChat} style={{ width: '80px', background: '#333' }}>傳送</button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <aside style={styles.sideArea}>
-          <div style={styles.sectionTitle}>🏆 英雄榜</div>
-          <div style={styles.rankList}>
-            {topUsers.map((u, i) => (
-              <div key={u.id} style={styles.rankItem}>
-                <span>{i + 1}. {u.name}</span>
-                <span style={{ color: '#ffeb3b' }}>{u.totalScore}</span>
-              </div>
-            ))}
-          </div>
-
-          <div style={{ ...styles.sectionTitle, marginTop: '20px' }}>📉 易錯題統計</div>
-          <div style={styles.rankList}>
-            {Object.entries(stats)
-              .sort((a, b) => b[1].wrong - a[1].wrong)
-              .slice(0, 10)
-              .map(([id, val]) => (
-                <div key={id} style={{ ...styles.rankItem, fontSize: '0.85rem' }}>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '70%' }}>
-                    {val.text}
-                  </span>
-                  <span style={{ color: '#ff5252' }}>{Math.round((val.wrong / val.total) * 100)}%</span>
-                </div>
-              ))}
-          </div>
-        </aside>
-      </div>
-    </div>
-  );
-
-  const renderGame = () => {
-    const q = currentQuestions[currentIndex];
-    if (!q) return <div style={styles.container}>載入題目中...</div>;
-
-    const options = [q.option1, q.option2, q.option3, q.option4];
-    const ansIdx = parseInt(q.answer) - 1;
-
-    return (
-      <div style={styles.gameContainer}>
-        {/* 分數面板 */}
-        <div style={styles.scoreBoard}>
-          <div style={{ textAlign: 'left' }}>
-            <div style={{ fontSize: '0.9rem', color: '#aaa' }}>{p1Info?.name || 'Player 1'}</div>
-            <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#00d4ff' }}>{p1Score}</div>
-          </div>
-          <div style={styles.timerCircle}>{timer}</div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '0.9rem', color: '#aaa' }}>{isAiMode ? 'AI 機器人' : (p2Info?.name || 'Player 2')}</div>
-            <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#ff5252' }}>{p2Score}</div>
-          </div>
-        </div>
-
-        {/* 題目區 */}
-        <div style={styles.questionCard}>
-          <div style={{ fontSize: '1.2rem', color: '#00d4ff', marginBottom: '10px' }}>Question {currentIndex + 1} / {QUESTION_COUNT}</div>
-          <h2 style={{ fontSize: '1.5rem', lineHeight: '1.4' }}>{q.question}</h2>
-        </div>
-
-        {/* 選項區 */}
-        <div style={styles.optionsGrid}>
-          {options.map((opt, i) => {
-            let border = '2px solid #333';
-            let bg = '#1e1e1e';
-            if (reveal) {
-              if (i === ansIdx) bg = '#2e7d32';
-              if (p1Choice === i && i !== ansIdx) bg = '#c62828';
-              if (p2Choice === i && i !== ansIdx) border = '3px solid #ff5252';
-              if (i === ansIdx) border = '3px solid #4caf50';
-            } else if (selectedIdx === i) {
-              border = '3px solid #00d4ff';
-            }
-
-            return (
-              <button key={i} className="option-btn" onClick={() => handleChoice(i)} style={{ ...styles.optionBtn, background: bg, border }}>
-                <span style={styles.optionLetter}>{['A', 'B', 'C', 'D'][i]}</span>
-                {opt}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* 等待對手提示 */}
-        {!isAiMode && !reveal && selectedIdx !== null && (
-          <div style={{ marginTop: '20px', color: '#aaa', fontStyle: 'italic' }}>等待對手作答...</div>
-        )}
-      </div>
-    );
-  };
-
-  const renderFinished = () => {
-    const myS = myRole === 'p1' ? p1Score : p2Score;
-    const oppS = myRole === 'p1' ? p2Score : p1Score;
-    const isWin = myS > oppS;
-    const isDraw = myS === oppS;
-
-    return (
-      <div style={styles.overlay}>
-        <h1 style={{ fontSize: '4rem', color: isWin ? '#ffeb3b' : isDraw ? '#fff' : '#ff5252' }}>
-          {isWin ? 'VICTORY! 🎉' : isDraw ? 'DRAW 🤝' : 'DEFEAT... 💀'}
-        </h1>
-        <div style={{ fontSize: '2rem', margin: '20px 0' }}>{myS} : {oppS}</div>
-        <p style={{ color: '#aaa' }}>{isWin ? '獲得體力獎勵 +5 HP' : '下次再接再厲！'}</p>
-        <button className="btn" onClick={finishGameAndGoLobby} style={{ background: '#4caf50', marginTop: '30px', width: '200px' }}>
-          回到大廳
-        </button>
-      </div>
-    );
-  };
-
-  return (
-    <div style={{ minHeight: '100vh', background: '#0a0a0a', color: '#fff', fontFamily: 'sans-serif' }}>
-      {gameState === 'LOBBY' && renderLobby()}
-      {gameState === 'WAITING' && (
-        <div style={styles.overlay}>
-          <div className="loader"></div>
-          <h2>等待對手加入...</h2>
-          <p>桌號: {currentRoomId}</p>
-          <button className="btn" onClick={finishGameAndGoLobby} style={{ background: '#333', width: '150px' }}>取消等待</button>
         </div>
       )}
-      {gameState === 'PLAYING' && renderGame()}
-      {gameState === 'FINISHED' && renderFinished()}
 
-      <style>{`
-        .btn { border: none; border-radius: 8px; padding: 12px; font-size: 1rem; cursor: pointer; color: white; width: 100%; transition: 0.3s; font-weight: bold; }
-        .btn:hover { filter: brightness(1.2); transform: translateY(-2px); }
-        .input { width: 100%; padding: 12px; margin: 10px 0; border-radius: 8px; border: 1px solid #333; background: #1e1e1e; color: white; box-sizing: border-box; }
-        .loader { border: 5px solid #333; border-top: 5px solid #00d4ff; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 20px; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-      `}</style>
+      {user && view !== 'login' && (
+        <>
+          <header>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+              <img
+                src={avatarSrc(user.studentId)}
+                className="avatar"
+                alt=""
+                onError={(e) => {
+                  e.target.src = 'https://via.placeholder.com/40';
+                }}
+              />
+              <b style={{ wordBreak: 'break-word' }}>{user.name}</b>
+              <span style={{ color: '#ff5252', marginLeft: '5px' }}>❤️ {user.hp}</span>
+              <span style={{ color: '#ffeb3b', marginLeft: '5px' }}>💰 {user.totalScore}</span>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {!user?.isTeacher && (
+                <button
+                  onClick={async () => {
+                    if (user.totalScore < 15) {
+                      alert('積分不足');
+                      return;
+                    }
+                    await dbUpdate(`users/${user.uid}`, {
+                      totalScore: increment(-15),
+                      hp: increment(1),
+                    }).catch(console.error);
+                    alert('兌換成功');
+                  }}
+                  className="btn"
+                  style={{
+                    background: '#4caf50',
+                    color: 'white',
+                    padding: '5px 10px',
+                    fontSize: '0.8rem',
+                  }}
+                >
+                  +1HP(15分)
+                </button>
+              )}
+              <button
+                onClick={async () => {
+                  await signOut(auth).catch(console.error);
+                  resetGameState();
+                  setUser(null);
+                  setView('login');
+                }}
+                className="btn"
+                style={{
+                  background: '#555',
+                  color: 'white',
+                  padding: '5px 10px',
+                  fontSize: '0.8rem',
+                }}
+              >
+                登出
+              </button>
+            </div>
+          </header>
+
+          <main style={{ width: '100%', boxSizing: 'border-box', paddingTop: '12px' }}>
+            {view === 'lobby' && user?.isTeacher && (
+              <div
+                style={{
+                  maxWidth: '1200px',
+                  width: '100%',
+                  margin: '0 auto',
+                  padding: '8px',
+                  boxSizing: 'border-box',
+                }}
+              >
+                <div className="box">
+                  <h3 style={{ color: '#ffeb3b', textAlign: 'center', marginTop: 0 }}>
+                    📊 學生容易錯的題目
+                  </h3>
+
+                  {questionStatsList.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#aaa', padding: '20px 0' }}>
+                      目前尚無統計資料
+                    </div>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table className="rank-table" style={{ fontSize: '0.95rem', minWidth: '820px' }}>
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            <th>題目</th>
+                            <th>正解</th>
+                            <th>作答次數</th>
+                            <th>答錯次數</th>
+                            <th>錯誤率</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {questionStatsList.map((q, i) => (
+                            <tr key={q.id}>
+                              <td>{i + 1}</td>
+                              <td style={{ maxWidth: '520px', whiteSpace: 'normal', lineHeight: 1.6 }}>
+                                {q.question}
+                              </td>
+                              <td style={{ color: '#4caf50', whiteSpace: 'normal' }}>{q.correctAnswer || '-'}</td>
+                              <td>{q.attempts}</td>
+                              <td style={{ color: '#ff5252' }}>{q.wrongs}</td>
+                              <td style={{ color: '#ffeb3b' }}>
+                                {q.attempts > 0 ? `${(q.wrongRate * 100).toFixed(1)}%` : '0%'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {renderMessageBoard()}
+              </div>
+            )}
+
+            {view === 'lobby' && !user?.isTeacher && (
+              <div className="lobby-layout">
+                <div className="box">
+                  <h3 style={{ color: '#ffeb3b', textAlign: 'center', marginTop: 0 }}>🏆 榮譽榜</h3>
+                  <div style={{ overflowX: 'auto', width: '100%' }}>
+                    <table className="rank-table" style={{ minWidth: '560px' }}>
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>頭像</th>
+                          <th>姓名</th>
+                          <th>積分</th>
+                          <th>勝</th>
+                          <th>敗</th>
+                          <th>勝率</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {leaderboard.map((u, i) => (
+                          <tr key={u.uid}>
+                            <td>{i + 1}</td>
+                            <td>
+                              <img
+                                src={avatarSrc(u.studentId)}
+                                className="avatar"
+                                alt=""
+                                onError={(e) => {
+                                  e.target.src = 'https://via.placeholder.com/40';
+                                }}
+                              />
+                            </td>
+                            <td>{u.name}</td>
+                            <td style={{ color: '#4caf50' }}>{u.totalScore}</td>
+                            <td>{u.wins || 0}</td>
+                            <td>{u.losses || 0}</td>
+                            <td style={{ color: '#ffeb3b' }}>{calcWinRate(u.wins, u.losses)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="box" style={{ textAlign: 'center', border: '1px solid #ff5252' }}>
+                    <button
+                      className="btn"
+                      onClick={startAiGame}
+                      style={{ background: '#ff5252', color: 'white', width: '100%' }}
+                    >
+                      🤖 AI 練習對戰 (4 HP)
+                    </button>
+                  </div>
+
+                  <div className="box">
+                    <h4 style={{ textAlign: 'center', marginTop: 0 }}>🎮 真人對戰桌 (2 HP)</h4>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))',
+                        gap: '8px',
+                      }}
+                    >
+                      {Array.from({ length: TOTAL_TABLES }).map((_, i) => {
+                        const tid = `Table_${i + 1}`;
+                        const status = roomStatusMap[tid] || {
+                          count: 0,
+                          label: '空房',
+                          bg: '#2c2c2c',
+                          border: '#444',
+                        };
+
+                        return (
+                          <button
+                            key={i}
+                            className="btn"
+                            onClick={() => handleJoinTable(i + 1)}
+                            style={{
+                              background: status.bg,
+                              color: 'white',
+                              border: `1px solid ${status.border}`,
+                              boxShadow: `0 0 0 1px ${status.border} inset, 0 0 12px ${status.shadow || 'transparent'}`,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '4px',
+                              minHeight: '64px',
+                            }}
+                          >
+                            <span>桌 {i + 1}</span>
+                            <span style={{ fontSize: '0.75rem', color: '#ddd' }}>{status.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {renderMessageBoard()}
+                </div>
+              </div>
+            )}
+
+            {view === 'game' && (
+              <div
+                style={{
+                  maxWidth: '800px',
+                  width: '100%',
+                  margin: '0 auto',
+                  padding: '8px',
+                  boxSizing: 'border-box',
+                }}
+              >
+                <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                  <div style={{ fontSize: '3rem', fontWeight: 'bold' }}>{timeLeft}s</div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-around',
+                      alignItems: 'center',
+                      gap: '12px',
+                      flexWrap: 'wrap',
+                      background: '#1e1e1e',
+                      padding: '15px',
+                      borderRadius: '15px',
+                      border: '1px solid #444',
+                    }}
+                  >
+                    <div style={{ minWidth: 100 }}>
+                      <img
+                        src={avatarSrc(p1Id, 80)}
+                        className="avatar-lg"
+                        alt=""
+                        onError={(e) => {
+                          e.target.src = 'https://via.placeholder.com/80';
+                        }}
+                      />
+                      <div style={{ fontSize: '1.5rem', color: '#4caf50' }}>{p1Score}</div>
+                      <small style={{ wordBreak: 'break-word' }}>{p1Name}</small>
+                    </div>
+                    <div style={{ fontSize: '2rem' }}>VS</div>
+                    <div style={{ minWidth: 100 }}>
+                      <img
+                        src={avatarSrc(p2Id, 80)}
+                        className="avatar-lg"
+                        alt=""
+                        onError={(e) => {
+                          e.target.src = 'https://via.placeholder.com/80';
+                        }}
+                      />
+                      <div style={{ fontSize: '1.5rem', color: '#2196f3' }}>{p2Score}</div>
+                      <small style={{ wordBreak: 'break-word' }}>{p2Name}</small>
+                    </div>
+                  </div>
+                </div>
+
+                {(p2Joined || isAiMode) ? (
+                  questions[currentIdx] && (
+                    <div className="box">
+                      <div style={{ fontSize: '1.2rem', marginBottom: '15px', wordBreak: 'break-word' }}>
+                        Q{currentIdx + 1}: {questions[currentIdx].question}
+                      </div>
+                      {questions[currentIdx].options.map((opt, i) => (
+                        <button
+                          key={i}
+                          onClick={() => onSelect(opt)}
+                          disabled={!!selections?.[myRole] || gameOver}
+                          className="option-btn"
+                          style={{
+                            background: selections?.[myRole]
+                              ? opt.isCorrect
+                                ? '#2e7d32'
+                                : selections[myRole].text === opt.text
+                                  ? '#c62828'
+                                  : '#333'
+                              : '#333',
+                          }}
+                        >
+                          {opt.text}
+                        </button>
+                      ))}
+                    </div>
+                  )
+                ) : (
+                  <div className="box" style={{ textAlign: 'center', padding: '32px 12px' }}>
+                    ⏳ 等待對手加入...
+                  </div>
+                )}
+
+                {renderMessageBoard(true)}
+              </div>
+            )}
+          </main>
+
+          {gameOver && (
+            <div
+              style={{
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(0,0,0,0.95)',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                alignItems: 'center',
+                zIndex: 2000,
+                padding: '20px',
+                boxSizing: 'border-box',
+                textAlign: 'center',
+              }}
+            >
+              <h1
+                style={{
+                  fontSize: 'clamp(2.2rem, 10vw, 4rem)',
+                  color:
+                    (myRole === 'p1' ? p1Score : p2Score) >
+                    (myRole === 'p1' ? p2Score : p1Score)
+                      ? '#ffeb3b'
+                      : '#ff5252',
+                  marginBottom: '20px',
+                }}
+              >
+                {(myRole === 'p1' ? p1Score : p2Score) >
+                (myRole === 'p1' ? p2Score : p1Score)
+                  ? 'VICTORY! 🎉'
+                  : 'DEFEAT... 💀'}
+              </h1>
+              <button
+                className="btn"
+                onClick={finishGameAndGoLobby}
+                style={{
+                  background: '#4caf50',
+                  color: 'white',
+                  padding: '15px 32px',
+                  fontSize: '1.1rem',
+                  maxWidth: '100%',
+                }}
+              >
+                返回大廳
+              </button>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
-};
-
-const styles = {
-  container: { height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' },
-  loginCard: { background: '#111', padding: '40px', borderRadius: '20px', width: '100%', maxWidth: '400px', textAlign: 'center', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' },
-  lobbyContainer: { padding: '20px', maxWidth: '1200px', margin: '0 auto' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#111', padding: '15px 25px', borderRadius: '15px', marginBottom: '20px' },
-  avatar: { width: '45px', height: '45px', background: '#00d4ff', borderRadius: '50%', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.5rem', color: '#000', fontWeight: 'bold' },
-  lobbyGrid: { display: 'grid', gridTemplateColumns: '1fr 300px', gap: '20px' },
-  mainArea: { background: '#111', padding: '25px', borderRadius: '20px' },
-  sideArea: { background: '#111', padding: '25px', borderRadius: '20px' },
-  sectionTitle: { fontSize: '1.2rem', fontWeight: 'bold', marginBottom: '15px', color: '#00d4ff', borderLeft: '4px solid #00d4ff', paddingLeft: '10px' },
-  tableGrid: { display: 'flex', flexWrap: 'wrap', gap: '10px' },
-  chatBox: { background: '#0a0a0a', borderRadius: '15px', padding: '15px', height: '300px', display: 'flex', flexDirection: 'column' },
-  chatMsgs: { flex: 1, overflowY: 'auto', marginBottom: '10px', fontSize: '0.9rem' },
-  rankList: { display: 'flex', flexDirection: 'column', gap: '10px' },
-  rankItem: { display: 'flex', justifyContent: 'space-between', background: '#1e1e1e', padding: '10px 15px', borderRadius: '10px' },
-  gameContainer: { maxWidth: '800px', margin: '0 auto', padding: '20px', textAlign: 'center' },
-  scoreBoard: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px', padding: '20px', background: '#111', borderRadius: '20px' },
-  timerCircle: { width: '70px', height: '70px', borderRadius: '50%', border: '4px solid #00d4ff', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.8rem', fontWeight: 'bold', color: '#00d4ff' },
-  questionCard: { background: '#111', padding: '30px', borderRadius: '25px', marginBottom: '30px', boxShadow: '0 10px 20px rgba(0,0,0,0.3)' },
-  optionsGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' },
-  optionBtn: { padding: '20px', borderRadius: '15px', fontSize: '1.1rem', cursor: 'pointer', color: '#fff', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '15px', transition: '0.2s' },
-  optionLetter: { background: '#333', width: '30px', height: '30px', borderRadius: '8px', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '0.9rem', fontWeight: 'bold' },
-  overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.9)', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
-};
+}
 
 export default App;
