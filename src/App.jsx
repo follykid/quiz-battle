@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Papa from 'papaparse';
 import { db, auth } from './firebase';
@@ -191,11 +190,8 @@ function App() {
   const isAliveByUid = (room, uid) => {
     if (!uid) return false;
     if (uid === 'ai') return true;
-
     const ts = room?.presence?.[uid]?.ts || 0;
-    if (!ts) return false;
-
-    return Date.now() - ts <= HEARTBEAT_MS * 3;
+    return ts > 0 && Date.now() - ts <= HEARTBEAT_MS * 3;
   };
 
   const getRoomDisplayStatus = (room) => {
@@ -219,10 +215,6 @@ function App() {
 
     const occupiedCount = (room.p1Uid ? 1 : 0) + (room.p2Uid ? 1 : 0);
 
-    if (occupiedCount <= 0) {
-      return emptyStatus;
-    }
-
     if (occupiedCount === 1) {
       return {
         count: 1,
@@ -234,14 +226,18 @@ function App() {
       };
     }
 
-    return {
-      count: 2,
-      label: '已滿',
-      people: '2/2人',
-      bg: '#7f1d1d',
-      border: '#ff5252',
-      shadow: 'rgba(255,82,82,0.35)',
-    };
+    if (occupiedCount >= 2) {
+      return {
+        count: 2,
+        label: '已滿',
+        people: '2/2人',
+        bg: '#7f1d1d',
+        border: '#ff5252',
+        shadow: 'rgba(255,82,82,0.35)',
+      };
+    }
+
+    return emptyStatus;
   };
 
   const recordQuestionStat = async (questionObj, isCorrect) => {
@@ -715,10 +711,9 @@ function App() {
       return;
     }
 
-    const finalRoom = result?.snapshot?.val();
-
+    const finalRoom = result.snapshot.val();
     if (!finalRoom) {
-      alert('房間資料讀取失敗，請再試一次');
+      alert('進房失敗，請再試一次');
       return;
     }
 
@@ -729,15 +724,6 @@ function App() {
       alert('此房間已滿或房間狀態尚未清除，請換桌或稍後再試');
       return;
     }
-
-    await dbSet(`rooms/${tid}/presence/${user.uid}`, {
-      online: true,
-      ts: Date.now(),
-    }).catch(console.error);
-
-    await dbUpdate(`rooms/${tid}`, {
-      lastActive: Date.now(),
-    }).catch(console.error);
 
     await dbUpdate(`users/${user.uid}`, { hp: increment(-2) }).catch(console.error);
 
@@ -1731,7 +1717,7 @@ function App() {
                               alignItems: 'center',
                               justifyContent: 'center',
                               gap: '4px',
-                              minHeight: '72px',
+                              minHeight: '64px',
                             }}
                           >
                             <span>桌 {i + 1}</span>
