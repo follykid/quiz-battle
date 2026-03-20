@@ -606,100 +606,101 @@ const isAliveByUid = (room, uid) => {
     setView('game');
   };
 
-  const handleJoinTable = async (num) => {
-    if (Number(user?.hp) < 2) {
-      alert('HP 不足 2 點！');
-      return;
-    }
-    if (!allQuestions.length) return;
+ const handleJoinTable = async (num) => {
+  if (Number(user?.hp) < 2) {
+    alert('HP 不足 2 點！');
+    return;
+  }
+  if (!allQuestions.length) return;
 
-    const tid = `Table_${num}`;
-    const shuffled = shuffleQuestions(allQuestions);
-    const now = Date.now();
+  const tid = `Table_${num}`;
+  const shuffled = shuffleQuestions(allQuestions);
+  const now = Date.now();
 
-    const createFreshRoom = () => ({
-      roomType: 'pvp',
-      p1: user.name,
-      p1Uid: user.uid,
-      p1Id: user.studentId,
-      p2: null,
-      p2Uid: null,
-      p2Id: null,
-      roomQuestions: shuffled,
-      currentIdx: 0,
-      questionEndsAt: now + QUESTION_TIME * 1000,
-      scores: { p1: 0, p2: 0 },
-      selections: null,
-      gameOver: false,
-      createdAt: now,
-      lastActive: now,
-      finishedAt: null,
-      rewardClaimed: {},
-      presence: {
-        [user.uid]: { online: true, ts: now },
-      },
+  const createFreshRoom = () => ({
+    roomType: 'pvp',
+    p1: user.name,
+    p1Uid: user.uid,
+    p1Id: user.studentId,
+    p2: null,
+    p2Uid: null,
+    p2Id: user.studentId, // 修正建議：通常這裡也會帶入當前使用者 ID
+    roomQuestions: shuffled,
+    currentIdx: 0,
+    questionEndsAt: now + QUESTION_TIME * 1000,
+    scores: { p1: 0, p2: 0 },
+    selections: null,
+    gameOver: false,
+    createdAt: now,
+    lastActive: now,
+    finishedAt: null,
+    rewardClaimed: {},
+    presence: {
+      [user.uid]: { online: true, ts: now },
+    },
+  });
+
+  let finalRoom; // 建議統一使用 finalRoom 這個名稱
+  try {
+    finalRoom = await dbTx(`rooms/${tid}`, (room) => {
+      if (!room) return createFreshRoom();
+
+      const p1Alive = isAliveByUid(room, room.p1Uid);
+      const p2Alive = isAliveByUid(room, room.p2Uid);
+      const noLivePlayers = !p1Alive && !p2Alive;
+      const roomExpired =
+        room.gameOver ||
+        !room.p1Uid ||
+        noLivePlayers ||
+        now - (room.lastActive || 0) > ROOM_TIMEOUT_MS;
+
+      if (roomExpired) return createFreshRoom();
+
+      if (room.p1Uid === user.uid || room.p2Uid === user.uid) {
+        return {
+          ...room,
+          lastActive: now,
+          presence: {
+            ...(room.presence || {}),
+            [user.uid]: { online: true, ts: now },
+          },
+        };
+      }
+
+      if (!room.p2Uid || !p2Alive) {
+        return {
+          ...room,
+          p2: user.name,
+          p2Uid: user.uid,
+          p2Id: user.studentId,
+          lastActive: now,
+          presence: {
+            ...(room.presence || {}),
+            [user.uid]: { online: true, ts: now },
+          },
+        };
+      }
+
+      return room;
     });
+  } catch (err) {
+    console.error(err);
+    alert('進房失敗，請再試一次');
+    return;
+  }
 
-    let result;
-    try {
-      result = await dbTx(`rooms/${tid}`, (room) => {
-        if (!room) {
-          return createFreshRoom();
-        }
+  // 確保 finalRoom 存在後再判斷角色
+  if (!finalRoom) return;
 
-        const p1Alive = isAliveByUid(room, room.p1Uid);
-        const p2Alive = isAliveByUid(room, room.p2Uid);
-        const noLivePlayers = !p1Alive && !p2Alive;
-        const roomExpired =
-          room.gameOver ||
-          !room.p1Uid ||
-          noLivePlayers ||
-          now - (room.lastActive || 0) > ROOM_TIMEOUT_MS;
+  const role = finalRoom.p1Uid === user.uid ? 'p1' : finalRoom.p2Uid === user.uid ? 'p2' : null;
 
-        if (roomExpired) {
-          return createFreshRoom();
-        }
+  if (!role) {
+    alert('此房間已滿或房間狀態尚未清除，請換桌或稍後再試');
+    return;
+  }
 
-        if (room.p1Uid === user.uid || room.p2Uid === user.uid) {
-          return {
-            ...room,
-            lastActive: now,
-            presence: {
-              ...(room.presence || {}),
-              [user.uid]: { online: true, ts: now },
-            },
-          };
-        }
-
-        if (!room.p2Uid || !p2Alive) {
-          return {
-            ...room,
-            p2: user.name,
-            p2Uid: user.uid,
-            p2Id: user.studentId,
-            lastActive: now,
-            presence: {
-              ...(room.presence || {}),
-              [user.uid]: { online: true, ts: now },
-            },
-          };
-        }
-
-        return room;
-      });
-    } catch (err) {
-      console.error(err);
-      alert('進房失敗，請再試一次');
-      return;
-    }
-
-    const role =
-  finalRoom.p1Uid === user.uid ? 'p1' : finalRoom.p2Uid === user.uid ? 'p2' : null;
-
-if (!role) {
-  alert('此房間已滿或房間狀態尚未清除，請換桌或稍後再試');
-  return;
-}
+  // 這裡可以繼續處理進入房間後的邏輯，例如 setMyRole(role) 等
+}; // <--- 補上這個結束的大括號！
 
 await dbSet(`rooms/${tid}/presence/${user.uid}`, {
   online: true,
