@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Papa from 'papaparse';
 import { db, auth } from './firebase';
@@ -190,14 +191,18 @@ function App() {
   const isAliveByUid = (room, uid) => {
     if (!uid) return false;
     if (uid === 'ai') return true;
+
     const ts = room?.presence?.[uid]?.ts || 0;
-    return ts > 0 && Date.now() - ts <= HEARTBEAT_MS * 3;
+    if (!ts) return false;
+
+    return Date.now() - ts <= HEARTBEAT_MS * 3;
   };
 
   const getRoomDisplayStatus = (room) => {
     const emptyStatus = {
       count: 0,
       label: '空房',
+      people: '0/2人',
       bg: '#2c2c2c',
       border: '#555',
       shadow: 'rgba(255,255,255,0.06)',
@@ -212,30 +217,30 @@ function App() {
       return emptyStatus;
     }
 
-    const p1Alive = isAliveByUid(room, room.p1Uid);
-    const p2Alive = isAliveByUid(room, room.p2Uid);
-    const aliveCount = (p1Alive ? 1 : 0) + (p2Alive ? 1 : 0);
+    const occupiedCount = (room.p1Uid ? 1 : 0) + (room.p2Uid ? 1 : 0);
 
-    if (aliveCount <= 0) {
+    if (occupiedCount <= 0) {
       return emptyStatus;
     }
 
-    if (aliveCount === 1) {
+    if (occupiedCount === 1) {
       return {
         count: 1,
-        label: '1人',
+        label: '待加入',
+        people: '1/2人',
         bg: '#8a6d1f',
         border: '#ffeb3b',
-        shadow: 'rgba(255,235,59,0.28)',
+        shadow: 'rgba(255,235,59,0.35)',
       };
     }
 
     return {
       count: 2,
       label: '已滿',
+      people: '2/2人',
       bg: '#7f1d1d',
       border: '#ff5252',
-      shadow: 'rgba(255,82,82,0.28)',
+      shadow: 'rgba(255,82,82,0.35)',
     };
   };
 
@@ -710,9 +715,10 @@ function App() {
       return;
     }
 
-    const finalRoom = result.snapshot.val();
+    const finalRoom = result?.snapshot?.val();
+
     if (!finalRoom) {
-      alert('進房失敗，請再試一次');
+      alert('房間資料讀取失敗，請再試一次');
       return;
     }
 
@@ -723,6 +729,15 @@ function App() {
       alert('此房間已滿或房間狀態尚未清除，請換桌或稍後再試');
       return;
     }
+
+    await dbSet(`rooms/${tid}/presence/${user.uid}`, {
+      online: true,
+      ts: Date.now(),
+    }).catch(console.error);
+
+    await dbUpdate(`rooms/${tid}`, {
+      lastActive: Date.now(),
+    }).catch(console.error);
 
     await dbUpdate(`users/${user.uid}`, { hp: increment(-2) }).catch(console.error);
 
@@ -1695,8 +1710,10 @@ function App() {
                         const status = roomStatusMap[tid] || {
                           count: 0,
                           label: '空房',
+                          people: '0/2人',
                           bg: '#2c2c2c',
                           border: '#444',
+                          shadow: 'transparent',
                         };
 
                         return (
@@ -1714,11 +1731,12 @@ function App() {
                               alignItems: 'center',
                               justifyContent: 'center',
                               gap: '4px',
-                              minHeight: '64px',
+                              minHeight: '72px',
                             }}
                           >
                             <span>桌 {i + 1}</span>
                             <span style={{ fontSize: '0.75rem', color: '#ddd' }}>{status.label}</span>
+                            <span style={{ fontSize: '0.7rem', color: '#bbb' }}>{status.people}</span>
                           </button>
                         );
                       })}
