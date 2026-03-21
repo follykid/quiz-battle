@@ -433,10 +433,9 @@ function App() {
       ref(db, 'users'),
       (snap) => {
         const val = snap.val() || {};
-        const list = Object.entries(val)
-          .map(([uid, v]) => ({ uid, ...v }))
-          .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0))
-          .slice(0, 15);
+       const list = Object.entries(val)
+  .map(([uid, v]) => ({ uid, ...v }))
+  .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
 
         setLeaderboard(list);
 
