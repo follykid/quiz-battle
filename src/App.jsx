@@ -46,8 +46,7 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [inputMsg, setInputMsg] = useState('');
   const [questionStatsList, setQuestionStatsList] = useState([]);
-  const [roomsData, setRoomsData] = useState({});
-  const [debugTable1, setDebugTable1] = useState(null);
+  const [roomStatusMap, setRoomStatusMap] = useState({});
 
   const [roomId, setRoomId] = useState('');
   const [myRole, setMyRole] = useState('viewer');
@@ -195,48 +194,51 @@ function App() {
     return ts > 0 && Date.now() - ts <= HEARTBEAT_MS * 3;
   };
 
-const getRoomDisplayStatus = (room) => {
-  const emptyStatus = {
-    count: 0,
-    label: '空房',
-    people: '0/2人',
-    bg: '#2c2c2c',
-    border: '#555',
-    shadow: 'rgba(255,255,255,0.06)',
-  };
-
-  if (!room || room.gameOver || !room.p1Uid) {
-    return emptyStatus;
-  }
-
-  const p1Alive = isAliveByUid(room, room.p1Uid);
-  const p2Alive = isAliveByUid(room, room.p2Uid);
-  const aliveCount = (p1Alive ? 1 : 0) + (p2Alive ? 1 : 0);
-
-  if (aliveCount === 0) {
-    return emptyStatus;
-  }
-
-  if (aliveCount === 1) {
-    return {
-      count: 1,
-      label: '待加入',
-      people: '1/2人',
-      bg: '#8a6d1f',
-      border: '#ffeb3b',
-      shadow: 'rgba(255,235,59,0.35)',
+  const getRoomDisplayStatus = (room) => {
+    const emptyStatus = {
+      count: 0,
+      label: '空房',
+      people: '0/2人',
+      bg: '#2c2c2c',
+      border: '#555',
+      shadow: 'rgba(255,255,255,0.06)',
     };
-  }
 
-  return {
-    count: 2,
-    label: '已滿',
-    people: '2/2人',
-    bg: '#7f1d1d',
-    border: '#ff5252',
-    shadow: 'rgba(255,82,82,0.35)',
+    if (!room || room.gameOver || !room.p1Uid) {
+      return emptyStatus;
+    }
+
+    const expiredByTime = Date.now() - (room.lastActive || 0) > ROOM_TIMEOUT_MS;
+    if (expiredByTime) {
+      return emptyStatus;
+    }
+
+    const occupiedCount = (room.p1Uid ? 1 : 0) + (room.p2Uid ? 1 : 0);
+
+    if (occupiedCount === 1) {
+      return {
+        count: 1,
+        label: '待加入',
+        people: '1/2人',
+        bg: '#8a6d1f',
+        border: '#ffeb3b',
+        shadow: 'rgba(255,235,59,0.35)',
+      };
+    }
+
+    if (occupiedCount >= 2) {
+      return {
+        count: 2,
+        label: '已滿',
+        people: '2/2人',
+        bg: '#7f1d1d',
+        border: '#ff5252',
+        shadow: 'rgba(255,82,82,0.35)',
+      };
+    }
+
+    return emptyStatus;
   };
-};
 
   const recordQuestionStat = async (questionObj, isCorrect) => {
     if (!questionObj?.question) return;
@@ -458,37 +460,29 @@ const getRoomDisplayStatus = (room) => {
   }, [user?.uid]);
 
   useEffect(() => {
-  if (!user?.uid || user?.isTeacher) {
-    setRoomsData({});
-    return;
-  }
+    if (!user?.uid || user?.isTeacher) {
+      setRoomStatusMap({});
+      return;
+    }
 
-  const offRooms = onValue(
-    ref(db, 'rooms'),
-    (snap) => {
-      const val = snap.val() || {};
-      console.log('ROOMS RAW =>', val);
-      setRoomsData(val);
-    },
-    console.error
-  );
-
-  return () => offRooms();
-}, [user?.uid, user?.isTeacher]);
-
-  useEffect(() => {
-    const off = onValue(
-      ref(db, 'rooms/Table_1'),
+    const offRooms = onValue(
+      ref(db, 'rooms'),
       (snap) => {
-        const val = snap.val() || null;
-        console.log('DEBUG rooms/Table_1 =>', val);
-        setDebugTable1(val);
+        const val = snap.val() || {};
+        const nextMap = {};
+
+        for (let i = 1; i <= TOTAL_TABLES; i += 1) {
+          const tid = `Table_${i}`;
+          nextMap[tid] = getRoomDisplayStatus(val[tid]);
+        }
+
+        setRoomStatusMap(nextMap);
       },
       console.error
     );
 
-    return () => off();
-  }, []);
+    return () => offRooms();
+  }, [user?.uid, user?.isTeacher]);
 
   useEffect(() => {
     if (!user?.uid || !user?.isTeacher) {
@@ -717,40 +711,14 @@ const getRoomDisplayStatus = (room) => {
       return;
     }
 
-    if (!result?.committed) {
-      alert('進房交易未成功寫入 Firebase');
-      return;
-    }
-
-    await dbSet(`rooms/${tid}/presence/${user.uid}`, {
-      online: true,
-      ts: Date.now(),
-    }).catch(console.error);
-
-    await dbUpdate(`rooms/${tid}`, {
-      lastActive: Date.now(),
-    }).catch(console.error);
-
-    const verifySnap = await get(ref(db, `rooms/${tid}`));
-    const finalRoom = verifySnap.val();
-
-    console.log('JOIN VERIFY ROOM =>', tid, finalRoom);
-
+    const finalRoom = result.snapshot.val();
     if (!finalRoom) {
-      alert('Firebase 內找不到房間資料');
+      alert('進房失敗，請再試一次');
       return;
     }
 
     const role =
       finalRoom.p1Uid === user.uid ? 'p1' : finalRoom.p2Uid === user.uid ? 'p2' : null;
-
-    console.log('JOIN ROLE CHECK =>', {
-      tid,
-      myUid: user.uid,
-      p1Uid: finalRoom.p1Uid,
-      p2Uid: finalRoom.p2Uid,
-      role,
-    });
 
     if (!role) {
       alert('此房間已滿或房間狀態尚未清除，請換桌或稍後再試');
@@ -1135,6 +1103,16 @@ const getRoomDisplayStatus = (room) => {
 
     if (result?.committed) {
       await recordQuestionStat(questions[currentIdx], !!opt.isCorrect).catch(console.error);
+    }
+  };
+
+  const leaveCurrentRoom = async () => {
+    if (!roomId || !user?.uid) return;
+
+    try {
+      await dbRemove(`rooms/${roomId}`).catch(console.error);
+    } catch (err) {
+      console.error('leaveCurrentRoom failed:', err);
     }
   };
 
@@ -1584,6 +1562,7 @@ const getRoomDisplayStatus = (room) => {
               )}
               <button
                 onClick={async () => {
+                  await leaveCurrentRoom();
                   await signOut(auth).catch(console.error);
                   resetGameState();
                   setUser(null);
@@ -1714,86 +1693,52 @@ const getRoomDisplayStatus = (room) => {
                     </button>
                   </div>
 
-<div className="box">
-  <h4 style={{ textAlign: 'center', marginTop: 0 }}>🎮 真人對戰桌 (2 HP) build-0320-C</h4>
-  <div
-    style={{
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))',
-      gap: '8px',
-    }}
-  >
-    {Array.from({ length: TOTAL_TABLES }).map((_, i) => {
-      const tid = `Table_${i + 1}`;
-      const status = getRoomDisplayStatus(roomsData[tid]) || {
-        count: 0,
-        label: '空房',
-        people: '0/2人',
-        bg: '#2c2c2c',
-        border: '#444',
-        shadow: 'transparent',
-      };
+                  <div className="box">
+                    <h4 style={{ textAlign: 'center', marginTop: 0 }}>🎮 真人對戰桌 (2 HP) build-0320-B</h4>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))',
+                        gap: '8px',
+                      }}
+                    >
+                      {Array.from({ length: TOTAL_TABLES }).map((_, i) => {
+                        const tid = `Table_${i + 1}`;
+                        const status = roomStatusMap[tid] || {
+                          count: 0,
+                          label: '空房',
+                          people: '0/2人',
+                          bg: '#2c2c2c',
+                          border: '#444',
+                          shadow: 'transparent',
+                        };
 
-      return (
-        <button
-          key={i}
-          className="btn"
-          onClick={() => handleJoinTable(i + 1)}
-          style={{
-            background: status.bg,
-            color: 'white',
-            border: `1px solid ${status.border}`,
-            boxShadow: `0 0 0 1px ${status.border} inset, 0 0 12px ${status.shadow || 'transparent'}`,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '4px',
-            minHeight: '64px',
-          }}
-        >
-          <span>桌 {i + 1}</span>
-          <span style={{ fontSize: '0.75rem', color: '#ddd' }}>{status.label}</span>
-          <span style={{ fontSize: '0.7rem', color: '#bbb' }}>{status.people}</span>
-        </button>
-      );
-    })}
-  </div>
-
-  <div
-    style={{
-      marginTop: '12px',
-      fontSize: '12px',
-      color: '#aaa',
-      background: '#111',
-      border: '1px solid #333',
-      borderRadius: '8px',
-      padding: '8px',
-      whiteSpace: 'pre-wrap',
-      wordBreak: 'break-all',
-    }}
-  >
-    DEBUG Rooms Keys:
-    {'\n'}
-    {JSON.stringify(Object.keys(roomsData || {}), null, 2)}
-    {'\n\n'}
-    DEBUG Table_1 From roomsData:
-    {'\n'}
-    {JSON.stringify(roomsData?.Table_1 ?? null, null, 2)}
-    {'\n\n'}
-    DEBUG Table_1 Status From roomsData:
-    {'\n'}
-    {JSON.stringify(getRoomDisplayStatus(roomsData?.Table_1), null, 2)}
-    {'\n\n'}
-    DEBUG Table_1 Direct:
-    {'\n'}
-    {JSON.stringify(debugTable1, null, 2)}
-    {'\n\n'}
-    DEBUG Table_1 Status Direct:
-    {'\n'}
-    {JSON.stringify(getRoomDisplayStatus(debugTable1), null, 2)}
-  </div>
-</div>
+                        return (
+                          <button
+                            key={i}
+                            className="btn"
+                            onClick={() => handleJoinTable(i + 1)}
+                            style={{
+                              background: status.bg,
+                              color: 'white',
+                              border: `1px solid ${status.border}`,
+                              boxShadow: `0 0 0 1px ${status.border} inset, 0 0 12px ${status.shadow || 'transparent'}`,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '4px',
+                              minHeight: '64px',
+                            }}
+                          >
+                            <span>桌 {i + 1}</span>
+                            <span style={{ fontSize: '0.75rem', color: '#ddd' }}>{status.label}</span>
+                            <span style={{ fontSize: '0.7rem', color: '#bbb' }}>{status.people}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
 
                   {renderMessageBoard()}
                 </div>
@@ -1812,15 +1757,48 @@ const getRoomDisplayStatus = (room) => {
               >
                 <div style={{ textAlign: 'center', marginBottom: '20px' }}>
                   <div style={{ fontSize: '3rem', fontWeight: 'bold' }}>{timeLeft}s</div>
-                  <div
-                    style={{
-                      textAlign: 'center',
-                      color: '#888',
-                      fontSize: '0.85rem',
-                      marginBottom: '8px',
-                    }}
-                  >
-                    build-0320-C | roomId: {roomId || '-'}
+                   <div
+    style={{
+      textAlign: 'center',
+      color: '#888',
+      fontSize: '0.85rem',
+      marginBottom: '8px',
+    }}
+  >
+    build-0320-B | roomId: {roomId || '-'}
+  </div>
+
+  <div
+    style={{
+      display: 'flex',
+      justifyContent: 'space-around',
+      alignItems: 'center',
+      gap: '12px',
+      flexWrap: 'wrap',
+      background: '#1e1e1e',
+      padding: '15px',
+      borderRadius: '15px',
+      border: '1px solid #444',
+    }}
+  ></div>
+                  <div style={{ marginBottom: '12px' }}>
+                    <button
+                      className="btn"
+                      onClick={async () => {
+                        await leaveCurrentRoom();
+                        stopAllAudio();
+                        resetGameState();
+                        setView('lobby');
+                      }}
+                      style={{
+                        background: '#666',
+                        color: 'white',
+                        padding: '10px 18px',
+                        fontSize: '0.95rem',
+                      }}
+                    >
+                      離開房間
+                    </button>
                   </div>
                   <div
                     style={{
