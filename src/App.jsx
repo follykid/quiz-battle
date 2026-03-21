@@ -465,6 +465,7 @@ function App() {
       ref(db, 'rooms'),
       (snap) => {
         const val = snap.val() || {};
+        console.log('ROOMS RAW =>', val);
         setRoomsData(val);
       },
       console.error
@@ -1755,6 +1756,24 @@ function App() {
                           </button>
                         );
                       })}
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop: '12px',
+                        fontSize: '12px',
+                        color: '#aaa',
+                        background: '#111',
+                        border: '1px solid #333',
+                        borderRadius: '8px',
+                        padding: '8px',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                      }}
+                    >
+                      DEBUG Rooms Keys:
+                      {'\n'}
+                      {JSON.stringify(Object.keys(roomsData || {}), null, 2)}
                     </div>
 
                     <div
