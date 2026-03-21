@@ -48,7 +48,6 @@ function App() {
   const [inputMsg, setInputMsg] = useState('');
   const [questionStatsList, setQuestionStatsList] = useState([]);
   const [roomsData, setRoomsData] = useState({});
-  const [debugTable1, setDebugTable1] = useState(null);
 
   const [roomId, setRoomId] = useState('');
   const [myRole, setMyRole] = useState('viewer');
@@ -537,19 +536,6 @@ function App() {
 
     return () => offRooms();
   }, [user?.uid, user?.isTeacher]);
-
-  useEffect(() => {
-    const off = onValue(
-      ref(db, 'rooms/Table_1'),
-      (snap) => {
-        const val = snap.val() || null;
-        setDebugTable1(val);
-      },
-      console.error
-    );
-
-    return () => off();
-  }, []);
 
   useEffect(() => {
     if (!user?.uid || !user?.isTeacher) {
@@ -1832,40 +1818,6 @@ function App() {
                           </button>
                         );
                       })}
-                    </div>
-
-                    <div
-                      style={{
-                        marginTop: '12px',
-                        fontSize: '12px',
-                        color: '#aaa',
-                        background: '#111',
-                        border: '1px solid #333',
-                        borderRadius: '8px',
-                        padding: '8px',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-all',
-                      }}
-                    >
-                      DEBUG Rooms Keys:
-                      {'\n'}
-                      {JSON.stringify(Object.keys(roomsData || {}), null, 2)}
-                      {'\n\n'}
-                      DEBUG Table_1 From roomsData:
-                      {'\n'}
-                      {JSON.stringify(roomsData?.Table_1 ?? null, null, 2)}
-                      {'\n\n'}
-                      DEBUG Table_1 Status From roomsData:
-                      {'\n'}
-                      {JSON.stringify(getRoomDisplayStatus(roomsData?.Table_1), null, 2)}
-                      {'\n\n'}
-                      DEBUG Table_1 Direct:
-                      {'\n'}
-                      {JSON.stringify(debugTable1, null, 2)}
-                      {'\n\n'}
-                      DEBUG Table_1 Status Direct:
-                      {'\n'}
-                      {JSON.stringify(getRoomDisplayStatus(debugTable1), null, 2)}
                     </div>
                   </div>
 
