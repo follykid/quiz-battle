@@ -46,7 +46,7 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [inputMsg, setInputMsg] = useState('');
   const [questionStatsList, setQuestionStatsList] = useState([]);
-  const [roomStatusMap, setRoomStatusMap] = useState({});
+  const [roomsData, setRoomsData] = useState({});
   const [debugTable1, setDebugTable1] = useState(null);
 
   const [roomId, setRoomId] = useState('');
@@ -457,7 +457,7 @@ function App() {
 
   useEffect(() => {
     if (!user?.uid || user?.isTeacher) {
-      setRoomStatusMap({});
+      setRoomsData({});
       return;
     }
 
@@ -465,14 +465,7 @@ function App() {
       ref(db, 'rooms'),
       (snap) => {
         const val = snap.val() || {};
-        const nextMap = {};
-
-        for (let i = 1; i <= TOTAL_TABLES; i += 1) {
-          const tid = `Table_${i}`;
-          nextMap[tid] = getRoomDisplayStatus(val[tid]);
-        }
-
-        setRoomStatusMap(nextMap);
+        setRoomsData(val);
       },
       console.error
     );
@@ -1719,7 +1712,7 @@ function App() {
                   </div>
 
                   <div className="box">
-                    <h4 style={{ textAlign: 'center', marginTop: 0 }}>🎮 真人對戰桌 (2 HP) build-0320-B</h4>
+                    <h4 style={{ textAlign: 'center', marginTop: 0 }}>🎮 真人對戰桌 (2 HP) build-0320-C</h4>
                     <div
                       style={{
                         display: 'grid',
@@ -1729,7 +1722,7 @@ function App() {
                     >
                       {Array.from({ length: TOTAL_TABLES }).map((_, i) => {
                         const tid = `Table_${i + 1}`;
-                        const status = roomStatusMap[tid] || {
+                        const status = getRoomDisplayStatus(roomsData[tid]) || {
                           count: 0,
                           label: '空房',
                           people: '0/2人',
@@ -1780,6 +1773,10 @@ function App() {
                       DEBUG Table_1:
                       {'\n'}
                       {JSON.stringify(debugTable1, null, 2)}
+                      {'\n\n'}
+                      DEBUG Table_1 Status:
+                      {'\n'}
+                      {JSON.stringify(getRoomDisplayStatus(debugTable1), null, 2)}
                     </div>
                   </div>
 
@@ -1808,7 +1805,7 @@ function App() {
                       marginBottom: '8px',
                     }}
                   >
-                    build-0320-B | roomId: {roomId || '-'}
+                    build-0320-C | roomId: {roomId || '-'}
                   </div>
                   <div
                     style={{
