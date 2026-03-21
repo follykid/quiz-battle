@@ -456,23 +456,23 @@ function App() {
   }, [user?.uid]);
 
   useEffect(() => {
-    if (!user?.uid || user?.isTeacher) {
-      setRoomsData({});
-      return;
-    }
+  if (!user?.uid || user?.isTeacher) {
+    setRoomsData({});
+    return;
+  }
 
-    const offRooms = onValue(
-      ref(db, 'rooms'),
-      (snap) => {
-        const val = snap.val() || {};
-        console.log('ROOMS RAW =>', val);
-        setRoomsData(val);
-      },
-      console.error
-    );
+  const offRooms = onValue(
+    ref(db, 'rooms'),
+    (snap) => {
+      const val = snap.val() || {};
+      console.log('ROOMS RAW =>', val);
+      setRoomsData(val);
+    },
+    console.error
+  );
 
-    return () => offRooms();
-  }, [user?.uid, user?.isTeacher]);
+  return () => offRooms();
+}, [user?.uid, user?.isTeacher]);
 
   useEffect(() => {
     const off = onValue(
@@ -1712,92 +1712,86 @@ function App() {
                     </button>
                   </div>
 
-                  <div className="box">
-                    <h4 style={{ textAlign: 'center', marginTop: 0 }}>🎮 真人對戰桌 (2 HP) build-0320-C</h4>
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))',
-                        gap: '8px',
-                      }}
-                    >
-                      {Array.from({ length: TOTAL_TABLES }).map((_, i) => {
-                        const tid = `Table_${i + 1}`;
-                        const status = getRoomDisplayStatus(roomsData[tid]) || {
-                          count: 0,
-                          label: '空房',
-                          people: '0/2人',
-                          bg: '#2c2c2c',
-                          border: '#444',
-                          shadow: 'transparent',
-                        };
+<div className="box">
+  <h4 style={{ textAlign: 'center', marginTop: 0 }}>🎮 真人對戰桌 (2 HP) build-0320-C</h4>
+  <div
+    style={{
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))',
+      gap: '8px',
+    }}
+  >
+    {Array.from({ length: TOTAL_TABLES }).map((_, i) => {
+      const tid = `Table_${i + 1}`;
+      const status = getRoomDisplayStatus(roomsData[tid]) || {
+        count: 0,
+        label: '空房',
+        people: '0/2人',
+        bg: '#2c2c2c',
+        border: '#444',
+        shadow: 'transparent',
+      };
 
-                        return (
-                          <button
-                            key={i}
-                            className="btn"
-                            onClick={() => handleJoinTable(i + 1)}
-                            style={{
-                              background: status.bg,
-                              color: 'white',
-                              border: `1px solid ${status.border}`,
-                              boxShadow: `0 0 0 1px ${status.border} inset, 0 0 12px ${status.shadow || 'transparent'}`,
-                              display: 'flex',
-                              flexDirection: 'column',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: '4px',
-                              minHeight: '64px',
-                            }}
-                          >
-                            <span>桌 {i + 1}</span>
-                            <span style={{ fontSize: '0.75rem', color: '#ddd' }}>{status.label}</span>
-                            <span style={{ fontSize: '0.7rem', color: '#bbb' }}>{status.people}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
+      return (
+        <button
+          key={i}
+          className="btn"
+          onClick={() => handleJoinTable(i + 1)}
+          style={{
+            background: status.bg,
+            color: 'white',
+            border: `1px solid ${status.border}`,
+            boxShadow: `0 0 0 1px ${status.border} inset, 0 0 12px ${status.shadow || 'transparent'}`,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '4px',
+            minHeight: '64px',
+          }}
+        >
+          <span>桌 {i + 1}</span>
+          <span style={{ fontSize: '0.75rem', color: '#ddd' }}>{status.label}</span>
+          <span style={{ fontSize: '0.7rem', color: '#bbb' }}>{status.people}</span>
+        </button>
+      );
+    })}
+  </div>
 
-                    <div
-                      style={{
-                        marginTop: '12px',
-                        fontSize: '12px',
-                        color: '#aaa',
-                        background: '#111',
-                        border: '1px solid #333',
-                        borderRadius: '8px',
-                        padding: '8px',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-all',
-                      }}
-                    >
-                      DEBUG Rooms Keys:
-                      {'\n'}
-                      {JSON.stringify(Object.keys(roomsData || {}), null, 2)}
-                    </div>
-
-                    <div
-                      style={{
-                        marginTop: '12px',
-                        fontSize: '12px',
-                        color: '#aaa',
-                        background: '#111',
-                        border: '1px solid #333',
-                        borderRadius: '8px',
-                        padding: '8px',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-all',
-                      }}
-                    >
-                      DEBUG Table_1:
-                      {'\n'}
-                      {JSON.stringify(debugTable1, null, 2)}
-                      {'\n\n'}
-                      DEBUG Table_1 Status:
-                      {'\n'}
-                      {JSON.stringify(getRoomDisplayStatus(debugTable1), null, 2)}
-                    </div>
-                  </div>
+  <div
+    style={{
+      marginTop: '12px',
+      fontSize: '12px',
+      color: '#aaa',
+      background: '#111',
+      border: '1px solid #333',
+      borderRadius: '8px',
+      padding: '8px',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-all',
+    }}
+  >
+    DEBUG Rooms Keys:
+    {'\n'}
+    {JSON.stringify(Object.keys(roomsData || {}), null, 2)}
+    {'\n\n'}
+    DEBUG Table_1 From roomsData:
+    {'\n'}
+    {JSON.stringify(roomsData?.Table_1 ?? null, null, 2)}
+    {'\n\n'}
+    DEBUG Table_1 Status From roomsData:
+    {'\n'}
+    {JSON.stringify(getRoomDisplayStatus(roomsData?.Table_1), null, 2)}
+    {'\n\n'}
+    DEBUG Table_1 Direct:
+    {'\n'}
+    {JSON.stringify(debugTable1, null, 2)}
+    {'\n\n'}
+    DEBUG Table_1 Status Direct:
+    {'\n'}
+    {JSON.stringify(getRoomDisplayStatus(debugTable1), null, 2)}
+  </div>
+</div>
 
                   {renderMessageBoard()}
                 </div>
