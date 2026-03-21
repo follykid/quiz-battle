@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Papa from 'papaparse';
 import { db, auth } from './firebase';
@@ -17,6 +18,7 @@ import {
   remove,
   onDisconnect,
   runTransaction,
+  serverTimestamp,
 } from 'firebase/database';
 import { STUDENTS } from './students';
 
@@ -46,7 +48,8 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [inputMsg, setInputMsg] = useState('');
   const [questionStatsList, setQuestionStatsList] = useState([]);
-  const [roomStatusMap, setRoomStatusMap] = useState({});
+  const [roomsData, setRoomsData] = useState({});
+  const [debugTable1, setDebugTable1] = useState(null);
 
   const [roomId, setRoomId] = useState('');
   const [myRole, setMyRole] = useState('viewer');
@@ -208,14 +211,15 @@ function App() {
       return emptyStatus;
     }
 
-    const expiredByTime = Date.now() - (room.lastActive || 0) > ROOM_TIMEOUT_MS;
-    if (expiredByTime) {
+    const p1Alive = isAliveByUid(room, room.p1Uid);
+    const p2Alive = isAliveByUid(room, room.p2Uid);
+    const aliveCount = (p1Alive ? 1 : 0) + (p2Alive ? 1 : 0);
+
+    if (aliveCount === 0) {
       return emptyStatus;
     }
 
-    const occupiedCount = (room.p1Uid ? 1 : 0) + (room.p2Uid ? 1 : 0);
-
-    if (occupiedCount === 1) {
+    if (aliveCount === 1) {
       return {
         count: 1,
         label: '待加入',
@@ -226,18 +230,14 @@ function App() {
       };
     }
 
-    if (occupiedCount >= 2) {
-      return {
-        count: 2,
-        label: '已滿',
-        people: '2/2人',
-        bg: '#7f1d1d',
-        border: '#ff5252',
-        shadow: 'rgba(255,82,82,0.35)',
-      };
-    }
-
-    return emptyStatus;
+    return {
+      count: 2,
+      label: '已滿',
+      people: '2/2人',
+      bg: '#7f1d1d',
+      border: '#ff5252',
+      shadow: 'rgba(255,82,82,0.35)',
+    };
   };
 
   const recordQuestionStat = async (questionObj, isCorrect) => {
@@ -301,6 +301,16 @@ function App() {
       advanceTimerRef.current = null;
     }
   }, [stopAllAudio]);
+
+  const leaveCurrentRoom = async () => {
+    if (!roomId || !user?.uid) return;
+
+    try {
+      await dbRemove(`rooms/${roomId}`).catch(console.error);
+    } catch (err) {
+      console.error('leaveCurrentRoom failed:', err);
+    }
+  };
 
   const roomCurrentIdx = roomData?.currentIdx ?? 0;
   const roomGameOver = !!roomData?.gameOver;
@@ -388,6 +398,8 @@ function App() {
           wins: 0,
           losses: 0,
           isTeacher: inferredStudentId === 'teacher',
+          online: false,
+          lastSeen: 0,
         };
 
         let finalUserData = baseUserData;
@@ -460,8 +472,43 @@ function App() {
   }, [user?.uid]);
 
   useEffect(() => {
+    if (!user?.uid) return;
+
+    const userRef = ref(db, `users/${user.uid}`);
+    const disconnectOp = onDisconnect(userRef);
+
+    dbUpdate(`users/${user.uid}`, {
+      online: true,
+      lastSeen: serverTimestamp(),
+    }).catch(console.error);
+
+    disconnectOp
+      .update({
+        online: false,
+        lastSeen: serverTimestamp(),
+      })
+      .catch(console.error);
+
+    const timer = setInterval(() => {
+      dbUpdate(`users/${user.uid}`, {
+        online: true,
+        lastSeen: serverTimestamp(),
+      }).catch(console.error);
+    }, HEARTBEAT_MS);
+
+    return () => {
+      clearInterval(timer);
+      disconnectOp.cancel().catch(console.error);
+      dbUpdate(`users/${user.uid}`, {
+        online: false,
+        lastSeen: serverTimestamp(),
+      }).catch(console.error);
+    };
+  }, [user?.uid]);
+
+  useEffect(() => {
     if (!user?.uid || user?.isTeacher) {
-      setRoomStatusMap({});
+      setRoomsData({});
       return;
     }
 
@@ -469,20 +516,28 @@ function App() {
       ref(db, 'rooms'),
       (snap) => {
         const val = snap.val() || {};
-        const nextMap = {};
-
-        for (let i = 1; i <= TOTAL_TABLES; i += 1) {
-          const tid = `Table_${i}`;
-          nextMap[tid] = getRoomDisplayStatus(val[tid]);
-        }
-
-        setRoomStatusMap(nextMap);
+        console.log('ROOMS RAW =>', val);
+        setRoomsData(val);
       },
       console.error
     );
 
     return () => offRooms();
   }, [user?.uid, user?.isTeacher]);
+
+  useEffect(() => {
+    const off = onValue(
+      ref(db, 'rooms/Table_1'),
+      (snap) => {
+        const val = snap.val() || null;
+        console.log('DEBUG rooms/Table_1 =>', val);
+        setDebugTable1(val);
+      },
+      console.error
+    );
+
+    return () => off();
+  }, []);
 
   useEffect(() => {
     if (!user?.uid || !user?.isTeacher) {
@@ -548,6 +603,8 @@ function App() {
         wins: 0,
         losses: 0,
         isTeacher: student.id === 'teacher',
+        online: false,
+        lastSeen: 0,
       };
 
       let finalUserData = baseUserData;
@@ -711,14 +768,40 @@ function App() {
       return;
     }
 
-    const finalRoom = result.snapshot.val();
+    if (!result?.committed) {
+      alert('進房交易未成功寫入 Firebase');
+      return;
+    }
+
+    await dbSet(`rooms/${tid}/presence/${user.uid}`, {
+      online: true,
+      ts: Date.now(),
+    }).catch(console.error);
+
+    await dbUpdate(`rooms/${tid}`, {
+      lastActive: Date.now(),
+    }).catch(console.error);
+
+    const verifySnap = await get(ref(db, `rooms/${tid}`));
+    const finalRoom = verifySnap.val();
+
+    console.log('JOIN VERIFY ROOM =>', tid, finalRoom);
+
     if (!finalRoom) {
-      alert('進房失敗，請再試一次');
+      alert('Firebase 內找不到房間資料');
       return;
     }
 
     const role =
       finalRoom.p1Uid === user.uid ? 'p1' : finalRoom.p2Uid === user.uid ? 'p2' : null;
+
+    console.log('JOIN ROLE CHECK =>', {
+      tid,
+      myUid: user.uid,
+      p1Uid: finalRoom.p1Uid,
+      p2Uid: finalRoom.p2Uid,
+      role,
+    });
 
     if (!role) {
       alert('此房間已滿或房間狀態尚未清除，請換桌或稍後再試');
@@ -1103,16 +1186,6 @@ function App() {
 
     if (result?.committed) {
       await recordQuestionStat(questions[currentIdx], !!opt.isCorrect).catch(console.error);
-    }
-  };
-
-  const leaveCurrentRoom = async () => {
-    if (!roomId || !user?.uid) return;
-
-    try {
-      await dbRemove(`rooms/${roomId}`).catch(console.error);
-    } catch (err) {
-      console.error('leaveCurrentRoom failed:', err);
     }
   };
 
@@ -1661,14 +1734,27 @@ function App() {
                           <tr key={u.uid}>
                             <td>{i + 1}</td>
                             <td>
-                              <img
-                                src={avatarSrc(u.studentId)}
-                                className="avatar"
-                                alt=""
-                                onError={(e) => {
-                                  e.target.src = 'https://via.placeholder.com/40';
-                                }}
-                              />
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <img
+                                  src={avatarSrc(u.studentId)}
+                                  className="avatar"
+                                  alt=""
+                                  onError={(e) => {
+                                    e.target.src = 'https://via.placeholder.com/40';
+                                  }}
+                                />
+                                <span
+                                  title={u.online ? '上線中' : '離線'}
+                                  style={{
+                                    width: '10px',
+                                    height: '10px',
+                                    borderRadius: '50%',
+                                    background: u.online ? '#4caf50' : '#666',
+                                    boxShadow: u.online ? '0 0 8px rgba(76,175,80,0.8)' : 'none',
+                                    flexShrink: 0,
+                                  }}
+                                />
+                              </div>
                             </td>
                             <td>{u.name}</td>
                             <td style={{ color: '#4caf50' }}>{u.totalScore}</td>
@@ -1694,7 +1780,7 @@ function App() {
                   </div>
 
                   <div className="box">
-                    <h4 style={{ textAlign: 'center', marginTop: 0 }}>🎮 真人對戰桌 (2 HP) build-0320-B</h4>
+                    <h4 style={{ textAlign: 'center', marginTop: 0 }}>🎮 真人對戰桌 (2 HP) build-0320-C</h4>
                     <div
                       style={{
                         display: 'grid',
@@ -1704,7 +1790,7 @@ function App() {
                     >
                       {Array.from({ length: TOTAL_TABLES }).map((_, i) => {
                         const tid = `Table_${i + 1}`;
-                        const status = roomStatusMap[tid] || {
+                        const status = getRoomDisplayStatus(roomsData[tid]) || {
                           count: 0,
                           label: '空房',
                           people: '0/2人',
@@ -1738,6 +1824,40 @@ function App() {
                         );
                       })}
                     </div>
+
+                    <div
+                      style={{
+                        marginTop: '12px',
+                        fontSize: '12px',
+                        color: '#aaa',
+                        background: '#111',
+                        border: '1px solid #333',
+                        borderRadius: '8px',
+                        padding: '8px',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                      }}
+                    >
+                      DEBUG Rooms Keys:
+                      {'\n'}
+                      {JSON.stringify(Object.keys(roomsData || {}), null, 2)}
+                      {'\n\n'}
+                      DEBUG Table_1 From roomsData:
+                      {'\n'}
+                      {JSON.stringify(roomsData?.Table_1 ?? null, null, 2)}
+                      {'\n\n'}
+                      DEBUG Table_1 Status From roomsData:
+                      {'\n'}
+                      {JSON.stringify(getRoomDisplayStatus(roomsData?.Table_1), null, 2)}
+                      {'\n\n'}
+                      DEBUG Table_1 Direct:
+                      {'\n'}
+                      {JSON.stringify(debugTable1, null, 2)}
+                      {'\n\n'}
+                      DEBUG Table_1 Status Direct:
+                      {'\n'}
+                      {JSON.stringify(getRoomDisplayStatus(debugTable1), null, 2)}
+                    </div>
                   </div>
 
                   {renderMessageBoard()}
@@ -1757,30 +1877,16 @@ function App() {
               >
                 <div style={{ textAlign: 'center', marginBottom: '20px' }}>
                   <div style={{ fontSize: '3rem', fontWeight: 'bold' }}>{timeLeft}s</div>
-                   <div
-    style={{
-      textAlign: 'center',
-      color: '#888',
-      fontSize: '0.85rem',
-      marginBottom: '8px',
-    }}
-  >
-    build-0320-B | roomId: {roomId || '-'}
-  </div>
-
-  <div
-    style={{
-      display: 'flex',
-      justifyContent: 'space-around',
-      alignItems: 'center',
-      gap: '12px',
-      flexWrap: 'wrap',
-      background: '#1e1e1e',
-      padding: '15px',
-      borderRadius: '15px',
-      border: '1px solid #444',
-    }}
-  ></div>
+                  <div
+                    style={{
+                      textAlign: 'center',
+                      color: '#888',
+                      fontSize: '0.85rem',
+                      marginBottom: '8px',
+                    }}
+                  >
+                    build-0320-C | roomId: {roomId || '-'}
+                  </div>
                   <div style={{ marginBottom: '12px' }}>
                     <button
                       className="btn"
