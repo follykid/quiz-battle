@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Papa from 'papaparse';
 import { db, auth } from './firebase';
@@ -49,7 +48,6 @@ function App() {
   const [inputMsg, setInputMsg] = useState('');
   const [questionStatsList, setQuestionStatsList] = useState([]);
   const [roomsData, setRoomsData] = useState({});
-  const [debugTable1, setDebugTable1] = useState(null);
 
   const [roomId, setRoomId] = useState('');
   const [myRole, setMyRole] = useState('viewer');
@@ -516,7 +514,6 @@ function App() {
       ref(db, 'rooms'),
       (snap) => {
         const val = snap.val() || {};
-        console.log('ROOMS RAW =>', val);
         setRoomsData(val);
       },
       console.error
@@ -524,20 +521,6 @@ function App() {
 
     return () => offRooms();
   }, [user?.uid, user?.isTeacher]);
-
-  useEffect(() => {
-    const off = onValue(
-      ref(db, 'rooms/Table_1'),
-      (snap) => {
-        const val = snap.val() || null;
-        console.log('DEBUG rooms/Table_1 =>', val);
-        setDebugTable1(val);
-      },
-      console.error
-    );
-
-    return () => off();
-  }, []);
 
   useEffect(() => {
     if (!user?.uid || !user?.isTeacher) {
@@ -785,8 +768,6 @@ function App() {
     const verifySnap = await get(ref(db, `rooms/${tid}`));
     const finalRoom = verifySnap.val();
 
-    console.log('JOIN VERIFY ROOM =>', tid, finalRoom);
-
     if (!finalRoom) {
       alert('Firebase 內找不到房間資料');
       return;
@@ -794,14 +775,6 @@ function App() {
 
     const role =
       finalRoom.p1Uid === user.uid ? 'p1' : finalRoom.p2Uid === user.uid ? 'p2' : null;
-
-    console.log('JOIN ROLE CHECK =>', {
-      tid,
-      myUid: user.uid,
-      p1Uid: finalRoom.p1Uid,
-      p2Uid: finalRoom.p2Uid,
-      role,
-    });
 
     if (!role) {
       alert('此房間已滿或房間狀態尚未清除，請換桌或稍後再試');
@@ -1780,7 +1753,7 @@ function App() {
                   </div>
 
                   <div className="box">
-                    <h4 style={{ textAlign: 'center', marginTop: 0 }}>🎮 真人對戰桌 (2 HP) build-0320-C</h4>
+                    <h4 style={{ textAlign: 'center', marginTop: 0 }}>🎮 真人對戰桌 (2 HP)</h4>
                     <div
                       style={{
                         display: 'grid',
@@ -1824,40 +1797,6 @@ function App() {
                         );
                       })}
                     </div>
-
-                    <div
-                      style={{
-                        marginTop: '12px',
-                        fontSize: '12px',
-                        color: '#aaa',
-                        background: '#111',
-                        border: '1px solid #333',
-                        borderRadius: '8px',
-                        padding: '8px',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-all',
-                      }}
-                    >
-                      DEBUG Rooms Keys:
-                      {'\n'}
-                      {JSON.stringify(Object.keys(roomsData || {}), null, 2)}
-                      {'\n\n'}
-                      DEBUG Table_1 From roomsData:
-                      {'\n'}
-                      {JSON.stringify(roomsData?.Table_1 ?? null, null, 2)}
-                      {'\n\n'}
-                      DEBUG Table_1 Status From roomsData:
-                      {'\n'}
-                      {JSON.stringify(getRoomDisplayStatus(roomsData?.Table_1), null, 2)}
-                      {'\n\n'}
-                      DEBUG Table_1 Direct:
-                      {'\n'}
-                      {JSON.stringify(debugTable1, null, 2)}
-                      {'\n\n'}
-                      DEBUG Table_1 Status Direct:
-                      {'\n'}
-                      {JSON.stringify(getRoomDisplayStatus(debugTable1), null, 2)}
-                    </div>
                   </div>
 
                   {renderMessageBoard()}
@@ -1877,16 +1816,6 @@ function App() {
               >
                 <div style={{ textAlign: 'center', marginBottom: '20px' }}>
                   <div style={{ fontSize: '3rem', fontWeight: 'bold' }}>{timeLeft}s</div>
-                  <div
-                    style={{
-                      textAlign: 'center',
-                      color: '#888',
-                      fontSize: '0.85rem',
-                      marginBottom: '8px',
-                    }}
-                  >
-                    build-0320-C | roomId: {roomId || '-'}
-                  </div>
                   <div style={{ marginBottom: '12px' }}>
                     <button
                       className="btn"
@@ -1906,6 +1835,7 @@ function App() {
                       離開房間
                     </button>
                   </div>
+
                   <div
                     style={{
                       display: 'flex',
