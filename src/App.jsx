@@ -195,7 +195,7 @@ function App() {
     return ts > 0 && Date.now() - ts <= HEARTBEAT_MS * 3;
   };
 
-  const getRoomDisplayStatus = (room) => {
+const getRoomDisplayStatus = (room) => {
   const emptyStatus = {
     count: 0,
     label: '空房',
@@ -211,13 +211,13 @@ function App() {
 
   const p1Alive = isAliveByUid(room, room.p1Uid);
   const p2Alive = isAliveByUid(room, room.p2Uid);
-  const occupiedCount = (p1Alive ? 1 : 0) + (p2Alive ? 1 : 0);
+  const aliveCount = (p1Alive ? 1 : 0) + (p2Alive ? 1 : 0);
 
-  if (occupiedCount === 0) {
+  if (aliveCount === 0) {
     return emptyStatus;
   }
 
-  if (occupiedCount === 1) {
+  if (aliveCount === 1) {
     return {
       count: 1,
       label: '待加入',
@@ -237,9 +237,6 @@ function App() {
     shadow: 'rgba(255,82,82,0.35)',
   };
 };
-
-    return emptyStatus;
-  };
 
   const recordQuestionStat = async (questionObj, isCorrect) => {
     if (!questionObj?.question) return;
