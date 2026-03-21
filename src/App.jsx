@@ -195,46 +195,46 @@ function App() {
     return ts > 0 && Date.now() - ts <= HEARTBEAT_MS * 3;
   };
 
-const getRoomDisplayStatus = (room) => {
-  const emptyStatus = {
-    count: 0,
-    label: '空房',
-    people: '0/2人',
-    bg: '#2c2c2c',
-    border: '#555',
-    shadow: 'rgba(255,255,255,0.06)',
-  };
+  const getRoomDisplayStatus = (room) => {
+    const emptyStatus = {
+      count: 0,
+      label: '空房',
+      people: '0/2人',
+      bg: '#2c2c2c',
+      border: '#555',
+      shadow: 'rgba(255,255,255,0.06)',
+    };
 
-  if (!room || room.gameOver || !room.p1Uid) {
+    if (!room || room.gameOver || !room.p1Uid) {
+      return emptyStatus;
+    }
+
+    const occupiedCount = (room.p1Uid ? 1 : 0) + (room.p2Uid ? 1 : 0);
+
+    if (occupiedCount === 1) {
+      return {
+        count: 1,
+        label: '待加入',
+        people: '1/2人',
+        bg: '#8a6d1f',
+        border: '#ffeb3b',
+        shadow: 'rgba(255,235,59,0.35)',
+      };
+    }
+
+    if (occupiedCount >= 2) {
+      return {
+        count: 2,
+        label: '已滿',
+        people: '2/2人',
+        bg: '#7f1d1d',
+        border: '#ff5252',
+        shadow: 'rgba(255,82,82,0.35)',
+      };
+    }
+
     return emptyStatus;
-  }
-
-  const occupiedCount = (room.p1Uid ? 1 : 0) + (room.p2Uid ? 1 : 0);
-
-  if (occupiedCount === 1) {
-    return {
-      count: 1,
-      label: '待加入',
-      people: '1/2人',
-      bg: '#8a6d1f',
-      border: '#ffeb3b',
-      shadow: 'rgba(255,235,59,0.35)',
-    };
-  }
-
-  if (occupiedCount >= 2) {
-    return {
-      count: 2,
-      label: '已滿',
-      people: '2/2人',
-      bg: '#7f1d1d',
-      border: '#ff5252',
-      shadow: 'rgba(255,82,82,0.35)',
-    };
-  }
-
-  return emptyStatus;
-};
+  };
 
   const recordQuestionStat = async (questionObj, isCorrect) => {
     if (!questionObj?.question) return;
