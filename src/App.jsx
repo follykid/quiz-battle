@@ -47,6 +47,7 @@ function App() {
   const [inputMsg, setInputMsg] = useState('');
   const [questionStatsList, setQuestionStatsList] = useState([]);
   const [roomStatusMap, setRoomStatusMap] = useState({});
+  const [debugTable1, setDebugTable1] = useState(null);
 
   const [roomId, setRoomId] = useState('');
   const [myRole, setMyRole] = useState('viewer');
@@ -198,7 +199,6 @@ function App() {
     const emptyStatus = {
       count: 0,
       label: '空房',
-      people: '0/2人',
       bg: '#2c2c2c',
       border: '#555',
       shadow: 'rgba(255,255,255,0.06)',
@@ -213,31 +213,31 @@ function App() {
       return emptyStatus;
     }
 
-    const occupiedCount = (room.p1Uid ? 1 : 0) + (room.p2Uid ? 1 : 0);
+    const p1Alive = isAliveByUid(room, room.p1Uid);
+    const p2Alive = isAliveByUid(room, room.p2Uid);
+    const aliveCount = (p1Alive ? 1 : 0) + (p2Alive ? 1 : 0);
 
-    if (occupiedCount === 1) {
+    if (aliveCount <= 0) {
+      return emptyStatus;
+    }
+
+    if (aliveCount === 1) {
       return {
         count: 1,
-        label: '待加入',
-        people: '1/2人',
+        label: '1人',
         bg: '#8a6d1f',
         border: '#ffeb3b',
-        shadow: 'rgba(255,235,59,0.35)',
+        shadow: 'rgba(255,235,59,0.28)',
       };
     }
 
-    if (occupiedCount >= 2) {
-      return {
-        count: 2,
-        label: '已滿',
-        people: '2/2人',
-        bg: '#7f1d1d',
-        border: '#ff5252',
-        shadow: 'rgba(255,82,82,0.35)',
-      };
-    }
-
-    return emptyStatus;
+    return {
+      count: 2,
+      label: '已滿',
+      bg: '#7f1d1d',
+      border: '#ff5252',
+      shadow: 'rgba(255,82,82,0.28)',
+    };
   };
 
   const recordQuestionStat = async (questionObj, isCorrect) => {
@@ -485,6 +485,20 @@ function App() {
   }, [user?.uid, user?.isTeacher]);
 
   useEffect(() => {
+    const off = onValue(
+      ref(db, 'rooms/Table_1'),
+      (snap) => {
+        const val = snap.val() || null;
+        console.log('DEBUG rooms/Table_1 =>', val);
+        setDebugTable1(val);
+      },
+      console.error
+    );
+
+    return () => off();
+  }, []);
+
+  useEffect(() => {
     if (!user?.uid || !user?.isTeacher) {
       setQuestionStatsList([]);
       return;
@@ -711,14 +725,40 @@ function App() {
       return;
     }
 
-    const finalRoom = result.snapshot.val();
+    if (!result?.committed) {
+      alert('進房交易未成功寫入 Firebase');
+      return;
+    }
+
+    await dbSet(`rooms/${tid}/presence/${user.uid}`, {
+      online: true,
+      ts: Date.now(),
+    }).catch(console.error);
+
+    await dbUpdate(`rooms/${tid}`, {
+      lastActive: Date.now(),
+    }).catch(console.error);
+
+    const verifySnap = await get(ref(db, `rooms/${tid}`));
+    const finalRoom = verifySnap.val();
+
+    console.log('JOIN VERIFY ROOM =>', tid, finalRoom);
+
     if (!finalRoom) {
-      alert('進房失敗，請再試一次');
+      alert('Firebase 內找不到房間資料');
       return;
     }
 
     const role =
       finalRoom.p1Uid === user.uid ? 'p1' : finalRoom.p2Uid === user.uid ? 'p2' : null;
+
+    console.log('JOIN ROLE CHECK =>', {
+      tid,
+      myUid: user.uid,
+      p1Uid: finalRoom.p1Uid,
+      p2Uid: finalRoom.p2Uid,
+      role,
+    });
 
     if (!role) {
       alert('此房間已滿或房間狀態尚未清除，請換桌或稍後再試');
@@ -1727,6 +1767,24 @@ function App() {
                         );
                       })}
                     </div>
+
+                    <div
+                      style={{
+                        marginTop: '12px',
+                        fontSize: '12px',
+                        color: '#aaa',
+                        background: '#111',
+                        border: '1px solid #333',
+                        borderRadius: '8px',
+                        padding: '8px',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                      }}
+                    >
+                      DEBUG Table_1:
+                      {'\n'}
+                      {JSON.stringify(debugTable1, null, 2)}
+                    </div>
                   </div>
 
                   {renderMessageBoard()}
@@ -1746,30 +1804,16 @@ function App() {
               >
                 <div style={{ textAlign: 'center', marginBottom: '20px' }}>
                   <div style={{ fontSize: '3rem', fontWeight: 'bold' }}>{timeLeft}s</div>
-                   <div
-    style={{
-      textAlign: 'center',
-      color: '#888',
-      fontSize: '0.85rem',
-      marginBottom: '8px',
-    }}
-  >
-    build-0320-B | roomId: {roomId || '-'}
-  </div>
-
-  <div
-    style={{
-      display: 'flex',
-      justifyContent: 'space-around',
-      alignItems: 'center',
-      gap: '12px',
-      flexWrap: 'wrap',
-      background: '#1e1e1e',
-      padding: '15px',
-      borderRadius: '15px',
-      border: '1px solid #444',
-    }}
-  ></div>
+                  <div
+                    style={{
+                      textAlign: 'center',
+                      color: '#888',
+                      fontSize: '0.85rem',
+                      marginBottom: '8px',
+                    }}
+                  >
+                    build-0320-B | roomId: {roomId || '-'}
+                  </div>
                   <div
                     style={{
                       display: 'flex',
