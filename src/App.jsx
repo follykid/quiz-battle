@@ -25,6 +25,7 @@ const QUESTION_TIME = 15;
 const QUESTION_COUNT = 10;
 const ROOM_TIMEOUT_MS = 45000;
 const HEARTBEAT_MS = 5000;
+const USER_STATUS_HEARTBEAT_MS = 15000;
 const REVEAL_MS = 1200;
 const AUTH_EMAIL_DOMAIN = 'sshes.tyc.edu.tw';
 const TOTAL_TABLES = 14;
@@ -429,28 +430,52 @@ function App() {
   useEffect(() => {
     if (!user?.uid) return;
 
-    const offUsers = onValue(
-      ref(db, 'users'),
+    const offMe = onValue(
+      ref(db, `users/${user.uid}`),
       (snap) => {
-        const val = snap.val() || {};
-       const list = Object.entries(val)
-  .map(([uid, v]) => ({ uid, ...v }))
-  .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
+        const me = snap.val();
+        if (!me) return;
 
-        setLeaderboard(list);
-
-        const me = val[user.uid];
-        if (me) {
-          setUser((prev) => ({
+        setUser((prev) => {
+          if (!prev) return prev;
+          return {
             ...prev,
             ...me,
             uid: prev.uid,
             studentId: me.studentId || prev.studentId,
-          }));
-        }
+          };
+        });
       },
       console.error
     );
+
+    return () => offMe();
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid || view !== 'lobby' || user?.isTeacher) {
+      setLeaderboard([]);
+      return;
+    }
+
+    const offUsers = onValue(
+      ref(db, 'users'),
+      (snap) => {
+        const val = snap.val() || {};
+        const list = Object.entries(val)
+          .map(([uid, v]) => ({ uid, ...v }))
+          .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
+
+        setLeaderboard(list);
+      },
+      console.error
+    );
+
+    return () => offUsers();
+  }, [user?.uid, user?.isTeacher, view]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
 
     const offMessages = onValue(
       ref(db, 'messages'),
@@ -462,64 +487,11 @@ function App() {
       console.error
     );
 
-    return () => {
-      offUsers();
-      offMessages();
-    };
+    return () => offMessages();
   }, [user?.uid]);
 
   useEffect(() => {
-    if (!user?.uid) return;
-
-    const userStatusRef = ref(db, `users/${user.uid}`);
-    const connectedRef = ref(db, '.info/connected');
-    let disconnectOp = null;
-
-    const offConnected = onValue(
-      connectedRef,
-      async (snap) => {
-        if (snap.val() !== true) return;
-
-        try {
-          disconnectOp = onDisconnect(userStatusRef);
-          await disconnectOp.update({
-            online: false,
-            lastSeen: serverTimestamp(),
-          });
-
-          await dbUpdate(`users/${user.uid}`, {
-            online: true,
-            lastSeen: serverTimestamp(),
-          });
-        } catch (err) {
-          console.error('presence setup failed:', err);
-        }
-      },
-      console.error
-    );
-
-    const timer = setInterval(() => {
-      dbUpdate(`users/${user.uid}`, {
-        online: true,
-        lastSeen: serverTimestamp(),
-      }).catch(console.error);
-    }, HEARTBEAT_MS);
-
-    return () => {
-      clearInterval(timer);
-      if (disconnectOp) {
-        disconnectOp.cancel().catch(console.error);
-      }
-      dbUpdate(`users/${user.uid}`, {
-        online: false,
-        lastSeen: serverTimestamp(),
-      }).catch(console.error);
-      offConnected();
-    };
-  }, [user?.uid]);
-
-  useEffect(() => {
-    if (!user?.uid || user?.isTeacher) {
+    if (!user?.uid || user?.isTeacher || view !== 'lobby') {
       setRoomsData({});
       return;
     }
@@ -534,10 +506,10 @@ function App() {
     );
 
     return () => offRooms();
-  }, [user?.uid, user?.isTeacher]);
+  }, [user?.uid, user?.isTeacher, view]);
 
   useEffect(() => {
-    if (!user?.uid || !user?.isTeacher) {
+    if (!user?.uid || !user?.isTeacher || view !== 'lobby') {
       setQuestionStatsList([]);
       return;
     }
@@ -574,7 +546,57 @@ function App() {
     );
 
     return () => offStats();
-  }, [user?.uid, user?.isTeacher]);
+  }, [user?.uid, user?.isTeacher, view]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    const userStatusRef = ref(db, `users/${user.uid}`);
+    const connectedRef = ref(db, '.info/connected');
+    let disconnectOp = null;
+
+    const offConnected = onValue(
+      connectedRef,
+      async (snap) => {
+        if (snap.val() !== true) return;
+
+        try {
+          disconnectOp = onDisconnect(userStatusRef);
+          await disconnectOp.update({
+            online: false,
+            lastSeen: serverTimestamp(),
+          });
+
+          await dbUpdate(`users/${user.uid}`, {
+            online: true,
+            lastSeen: serverTimestamp(),
+          });
+        } catch (err) {
+          console.error('presence setup failed:', err);
+        }
+      },
+      console.error
+    );
+
+    const timer = setInterval(() => {
+      dbUpdate(`users/${user.uid}`, {
+        online: true,
+        lastSeen: serverTimestamp(),
+      }).catch(console.error);
+    }, USER_STATUS_HEARTBEAT_MS);
+
+    return () => {
+      clearInterval(timer);
+      if (disconnectOp) {
+        disconnectOp.cancel().catch(console.error);
+      }
+      dbUpdate(`users/${user.uid}`, {
+        online: false,
+        lastSeen: serverTimestamp(),
+      }).catch(console.error);
+      offConnected();
+    };
+  }, [user?.uid]);
 
   const handleLogin = async () => {
     const student = STUDENTS.find((s) => s.id === loginId);
@@ -1628,7 +1650,6 @@ function App() {
                       lastSeen: serverTimestamp(),
                     }).catch(console.error);
                   }
-
                   await leaveCurrentRoom();
                   await signOut(auth).catch(console.error);
                   resetGameState();
@@ -1711,10 +1732,11 @@ function App() {
                 <div className="box">
                   <h3 style={{ color: '#ffeb3b', textAlign: 'center', marginTop: 0 }}>🏆 榮譽榜</h3>
                   <div style={{ overflowX: 'auto', width: '100%' }}>
-                    <table className="rank-table" style={{ minWidth: '560px' }}>
+                    <table className="rank-table" style={{ minWidth: '620px' }}>
                       <thead>
                         <tr>
                           <th>#</th>
+                          <th>狀態</th>
                           <th>頭像</th>
                           <th>姓名</th>
                           <th>積分</th>
@@ -1728,27 +1750,27 @@ function App() {
                           <tr key={u.uid}>
                             <td>{i + 1}</td>
                             <td>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <img
-                                  src={avatarSrc(u.studentId)}
-                                  className="avatar"
-                                  alt=""
-                                  onError={(e) => {
-                                    e.target.src = 'https://via.placeholder.com/40';
-                                  }}
-                                />
-                                <span
-                                  title={u.online ? '上線中' : '離線'}
-                                  style={{
-                                    width: '10px',
-                                    height: '10px',
-                                    borderRadius: '50%',
-                                    background: u.online ? '#4caf50' : '#666',
-                                    boxShadow: u.online ? '0 0 8px rgba(76,175,80,0.8)' : 'none',
-                                    flexShrink: 0,
-                                  }}
-                                />
-                              </div>
+                              <span
+                                title={u.online ? '上線中' : '離線'}
+                                style={{
+                                  display: 'inline-block',
+                                  width: '10px',
+                                  height: '10px',
+                                  borderRadius: '50%',
+                                  background: u.online ? '#4caf50' : '#666',
+                                  boxShadow: u.online ? '0 0 8px rgba(76,175,80,0.8)' : 'none',
+                                }}
+                              />
+                            </td>
+                            <td>
+                              <img
+                                src={avatarSrc(u.studentId)}
+                                className="avatar"
+                                alt=""
+                                onError={(e) => {
+                                  e.target.src = 'https://via.placeholder.com/40';
+                                }}
+                              />
                             </td>
                             <td>{u.name}</td>
                             <td style={{ color: '#4caf50' }}>{u.totalScore}</td>
