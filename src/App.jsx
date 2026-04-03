@@ -483,7 +483,10 @@ function App() {
   }, [user?.uid]);
 
   useEffect(() => {
-    if (!user?.uid || view !== 'lobby') return;
+    if (!user?.uid || user?.isTeacher || view !== 'lobby') {
+      setLeaderboard([]);
+      return;
+    }
 
     const offUsers = onValue(
       ref(db, 'users'),
@@ -499,7 +502,7 @@ function App() {
     );
 
     return () => offUsers();
-  }, [user?.uid, view]);
+  }, [user?.uid, user?.isTeacher, view]);
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -570,7 +573,7 @@ function App() {
   }, [user?.uid, user?.isTeacher, view]);
 
   useEffect(() => {
-    if (!user?.uid || !user?.isTeacher) {
+    if (!user?.uid || !user?.isTeacher || view !== 'lobby') {
       setQuestionStatsList([]);
       return;
     }
@@ -607,7 +610,7 @@ function App() {
     );
 
     return () => offStats();
-  }, [user?.uid, user?.isTeacher]);
+  }, [user?.uid, user?.isTeacher, view]);
 
   const handleLogin = async () => {
     const student = STUDENTS.find((s) => s.id === loginId);
@@ -1605,7 +1608,7 @@ function App() {
                 }}
               />
               <b style={{ wordBreak: 'break-word' }}>{user.name}</b>
-              <span style={{ color: '#ff5252', marginLeft: '5px' }}>❤️ {user.hp}</span>
+              <span style={{ color: '#ff5252', marginLeft: '5px' }}>❤️ {Math.max(0, user.hp ?? 0)}</span>
               <span style={{ color: '#ffeb3b', marginLeft: '5px' }}>💰 {user.totalScore}</span>
             </div>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
