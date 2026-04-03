@@ -25,9 +25,9 @@ import { STUDENTS } from './students';
 
 const QUESTION_TIME = 15;
 const QUESTION_COUNT = 10;
+const ROOM_TIMEOUT_MS = 45000;
 const HEARTBEAT_MS = 15000;
-const PRESENCE_TOLERANCE_MS = HEARTBEAT_MS * 6;
-const ROOM_TIMEOUT_MS = PRESENCE_TOLERANCE_MS;
+const PRESENCE_TIMEOUT_MS = HEARTBEAT_MS * 6;
 const USER_STATUS_HEARTBEAT_MS = 30000;
 const REVEAL_MS = 1200;
 const AUTH_EMAIL_DOMAIN = 'sshes.tyc.edu.tw';
@@ -40,7 +40,6 @@ const AI_AVATAR_SRC = `data:image/svg+xml;utf8,${encodeURIComponent(`
   <text x="80" y="92" font-size="44" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-weight="bold">AI</text>
 </svg>
 `)}`;
-
 
 const calcWinRate = (w = 0, l = 0) => {
   const total = (w || 0) + (l || 0);
@@ -57,73 +56,13 @@ const formatMessageTime = (ts) => {
   return `${hh}-${mm}-${month}-${day}`;
 };
 
-const shuffleQuestions = (source) => {
-  const arr = [...source];
-  for (let i = arr.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr.slice(0, QUESTION_COUNT);
-};
-
-const questionKeyOf = (text = '') => {
-  const bytes = new TextEncoder().encode(String(text).normalize('NFC'));
+const hashQuestionKey = (text = '') => {
   let hash = 2166136261;
-  for (const b of bytes) {
-    hash ^= b;
-    hash = Math.imul(hash, 16777619) >>> 0;
+  for (const ch of String(text)) {
+    hash ^= ch.codePointAt(0);
+    hash = Math.imul(hash, 16777619);
   }
-  return `q_${hash.toString(16).padStart(8, '0')}`;
-};
-
-const isAliveByUid = (room, uid) => {
-  if (!uid) return false;
-  if (uid === 'ai') return true;
-  const ts = room?.presence?.[uid]?.ts || 0;
-  return ts > 0 && Date.now() - ts <= PRESENCE_TOLERANCE_MS;
-};
-
-const getRoomDisplayStatus = (room) => {
-  const emptyStatus = {
-    count: 0,
-    label: '空房',
-    people: '0/2人',
-    bg: '#2c2c2c',
-    border: '#555',
-    shadow: 'rgba(255,255,255,0.06)',
-  };
-
-  if (!room || room.gameOver || !room.p1Uid) {
-    return emptyStatus;
-  }
-
-  const p1Alive = isAliveByUid(room, room.p1Uid);
-  const p2Alive = isAliveByUid(room, room.p2Uid);
-  const aliveCount = (p1Alive ? 1 : 0) + (p2Alive ? 1 : 0);
-
-  if (aliveCount === 0) {
-    return emptyStatus;
-  }
-
-  if (aliveCount === 1) {
-    return {
-      count: 1,
-      label: '待加入',
-      people: '1/2人',
-      bg: '#8a6d1f',
-      border: '#ffeb3b',
-      shadow: 'rgba(255,235,59,0.35)',
-    };
-  }
-
-  return {
-    count: 2,
-    label: '已滿',
-    people: '2/2人',
-    bg: '#7f1d1d',
-    border: '#ff5252',
-    shadow: 'rgba(255,82,82,0.35)',
-  };
+  return `q_${(hash >>> 0).toString(16)}`;
 };
 
 function App() {
@@ -140,9 +79,21 @@ function App() {
 
   const [roomId, setRoomId] = useState('');
   const [myRole, setMyRole] = useState('viewer');
+  const [p2Joined, setP2Joined] = useState(false);
   const [isAiMode, setIsAiMode] = useState(false);
+  const [questions, setQuestions] = useState([]);
   const [allQuestions, setAllQuestions] = useState([]);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [selections, setSelections] = useState(null);
   const [timeLeft, setTimeLeft] = useState(QUESTION_TIME);
+  const [questionEndsAt, setQuestionEndsAt] = useState(0);
+  const [gameOver, setGameOver] = useState(false);
+  const [p1Score, setP1Score] = useState(0);
+  const [p2Score, setP2Score] = useState(0);
+  const [p1Name, setP1Name] = useState('');
+  const [p2Name, setP2Name] = useState('');
+  const [p1Id, setP1Id] = useState('');
+  const [p2Id, setP2Id] = useState('');
   const [roomData, setRoomData] = useState(null);
 
   const isSwitching = useRef(false);
@@ -177,6 +128,15 @@ function App() {
     },
     [BASE]
   );
+
+  const shuffleQuestions = useCallback((source) => {
+    const arr = [...source];
+    for (let i = arr.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr.slice(0, QUESTION_COUNT);
+  }, []);
 
   const dbSet = async (path, data) => {
     try {
@@ -232,19 +192,60 @@ function App() {
     }
   };
 
+  const isAliveByUid = (room, uid) => {
+    if (!uid) return false;
+    if (uid === 'ai') return true;
+    const ts = room?.presence?.[uid]?.ts || 0;
+    return ts > 0 && Date.now() - ts <= PRESENCE_TIMEOUT_MS;
+  };
 
+  const getRoomDisplayStatus = (room) => {
+    const emptyStatus = {
+      count: 0,
+      label: '空房',
+      people: '0/2人',
+      bg: '#2c2c2c',
+      border: '#555',
+      shadow: 'rgba(255,255,255,0.06)',
+    };
 
+    if (!room || room.gameOver || !room.p1Uid) {
+      return emptyStatus;
+    }
 
+    const p1Alive = isAliveByUid(room, room.p1Uid);
+    const p2Alive = isAliveByUid(room, room.p2Uid);
+    const aliveCount = (p1Alive ? 1 : 0) + (p2Alive ? 1 : 0);
 
+    if (aliveCount === 0) return emptyStatus;
 
+    if (aliveCount === 1) {
+      return {
+        count: 1,
+        label: '待加入',
+        people: '1/2人',
+        bg: '#8a6d1f',
+        border: '#ffeb3b',
+        shadow: 'rgba(255,235,59,0.35)',
+      };
+    }
+
+    return {
+      count: 2,
+      label: '已滿',
+      people: '2/2人',
+      bg: '#7f1d1d',
+      border: '#ff5252',
+      shadow: 'rgba(255,82,82,0.35)',
+    };
+  };
 
   const recordQuestionStat = async (questionObj, isCorrect) => {
     if (!questionObj?.question) return;
     if (user?.isTeacher) return;
 
-    const key = questionKeyOf(questionObj.question);
-    const correctAnswer =
-      questionObj.options?.find((o) => o.isCorrect)?.text || '';
+    const key = hashQuestionKey(questionObj.question);
+    const correctAnswer = questionObj.options?.find((o) => o.isCorrect)?.text || '';
 
     await dbTx(`questionStats/${key}`, (stat) => {
       const current = stat || {
@@ -275,8 +276,20 @@ function App() {
     stopAllAudio();
     setRoomId('');
     setMyRole('viewer');
+    setP2Joined(false);
     setIsAiMode(false);
+    setQuestions([]);
+    setCurrentIdx(0);
+    setSelections(null);
     setTimeLeft(QUESTION_TIME);
+    setQuestionEndsAt(0);
+    setGameOver(false);
+    setP1Score(0);
+    setP2Score(0);
+    setP1Name('');
+    setP2Name('');
+    setP1Id('');
+    setP2Id('');
     setRoomData(null);
     isSwitching.current = false;
     gameOverPlayedRef.current = false;
@@ -288,7 +301,13 @@ function App() {
     }
   }, [stopAllAudio]);
 
-  const leaveCurrentRoom = useCallback(async () => {
+  const roomCurrentIdx = roomData?.currentIdx ?? 0;
+  const roomGameOver = !!roomData?.gameOver;
+  const p1Answered = !!roomData?.selections?.p1;
+  const p2Answered = !!roomData?.selections?.p2;
+  const bothAnswered = p1Answered && p2Answered;
+
+  const leaveCurrentRoom = async () => {
     if (!roomId || !user?.uid) return;
 
     try {
@@ -296,43 +315,24 @@ function App() {
       const room = snap.val();
       if (!room) return;
 
-      if (isAiMode || room.p1Uid === user.uid) {
+      if (room.roomType === 'ai' || room.p1Uid === user.uid || room.gameOver) {
         await dbRemove(`rooms/${roomId}`).catch(console.error);
         return;
       }
 
       if (room.p2Uid === user.uid) {
-        const nextSelections = room.selections?.p1 ? { p1: room.selections.p1 } : null;
-        await dbRootUpdate({
-          [`rooms/${roomId}/p2`]: null,
-          [`rooms/${roomId}/p2Uid`]: null,
-          [`rooms/${roomId}/p2Id`]: null,
-          [`rooms/${roomId}/presence/${user.uid}`]: null,
-          [`rooms/${roomId}/lastActive`]: Date.now(),
-          [`rooms/${roomId}/selections`]: nextSelections,
-          [`rooms/${roomId}/scores/p2`]: 0,
+        await dbUpdate(`rooms/${roomId}`, {
+          p2: null,
+          p2Uid: null,
+          p2Id: null,
+          lastActive: Date.now(),
         }).catch(console.error);
+        await dbRemove(`rooms/${roomId}/presence/${user.uid}`).catch(console.error);
       }
     } catch (err) {
       console.error('leaveCurrentRoom failed:', err);
     }
-  }, [roomId, user?.uid, isAiMode]);
-
-  const roomCurrentIdx = roomData?.currentIdx ?? 0;
-  const roomQuestionEndsAt = roomData?.questionEndsAt || 0;
-  const roomGameOver = !!roomData?.gameOver;
-  const roomSelections = roomData?.selections || null;
-  const roomQuestions = roomData?.roomQuestions || [];
-  const roomP1Score = roomData?.scores?.p1 || 0;
-  const roomP2Score = roomData?.scores?.p2 || 0;
-  const roomP1Name = roomData?.p1 || (isAiMode ? user?.name || '' : '');
-  const roomP2Name = roomData?.p2 || (isAiMode ? '🤖 練習用 AI' : '等待中...');
-  const roomP1Id = roomData?.p1Id || (isAiMode ? user?.studentId || '' : '');
-  const roomP2Id = roomData?.p2Id || (isAiMode ? 'ai' : '');
-  const roomP2Joined = isAiMode ? true : !!roomData?.p2Uid;
-  const p1Answered = !!roomSelections?.p1;
-  const p2Answered = !!roomSelections?.p2;
-  const bothAnswered = p1Answered && p2Answered;
+  };
 
   useEffect(() => {
     roomDataRef.current = roomData;
@@ -431,10 +431,7 @@ function App() {
           };
         }
 
-        setUser({
-          uid,
-          ...finalUserData,
-        });
+        setUser({ uid, ...finalUserData });
         setView((prev) => (prev === 'login' ? 'lobby' : prev));
       } catch (err) {
         console.error(err);
@@ -447,49 +444,27 @@ function App() {
   useEffect(() => {
     if (!user?.uid) return;
 
-    const offMe = onValue(
+    const offSelf = onValue(
       ref(db, `users/${user.uid}`),
       (snap) => {
         const me = snap.val();
-        if (!me) return;
-
-        setUser((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            ...me,
-            uid: prev.uid,
-            studentId: me.studentId || prev.studentId,
-          };
-        });
+        if (me) {
+          setUser((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              ...me,
+              uid: prev.uid,
+              studentId: me.studentId || prev.studentId,
+            };
+          });
+        }
       },
       console.error
     );
 
-    return () => offMe();
+    return () => offSelf();
   }, [user?.uid]);
-
-  useEffect(() => {
-    if (!user?.uid || view !== 'lobby' || user?.isTeacher) {
-      setLeaderboard([]);
-      return;
-    }
-
-    const offUsers = onValue(
-      ref(db, 'users'),
-      (snap) => {
-        const val = snap.val() || {};
-        const list = Object.entries(val)
-          .map(([uid, v]) => ({ uid, ...v }))
-          .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
-
-        setLeaderboard(list);
-      },
-      console.error
-    );
-
-    return () => offUsers();
-  }, [user?.uid, user?.isTeacher, view]);
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -508,62 +483,23 @@ function App() {
   }, [user?.uid]);
 
   useEffect(() => {
-    if (!user?.uid || user?.isTeacher || view !== 'lobby') {
-      setRoomsData({});
-      return;
-    }
+    if (!user?.uid || view !== 'lobby') return;
 
-    const offRooms = onValue(
-      ref(db, 'rooms'),
-      (snap) => {
-        const val = snap.val() || {};
-        setRoomsData(val);
-      },
-      console.error
-    );
-
-    return () => offRooms();
-  }, [user?.uid, user?.isTeacher, view]);
-
-  useEffect(() => {
-    if (!user?.uid || !user?.isTeacher || view !== 'lobby') {
-      setQuestionStatsList([]);
-      return;
-    }
-
-    const offStats = onValue(
-      ref(db, 'questionStats'),
+    const offUsers = onValue(
+      ref(db, 'users'),
       (snap) => {
         const val = snap.val() || {};
         const list = Object.entries(val)
-          .map(([id, v]) => {
-            const attempts = v.attempts ?? v.totalCount ?? 0;
-            const wrongs = v.wrongs ?? v.wrongCount ?? 0;
+          .map(([uid, v]) => ({ uid, ...v }))
+          .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
 
-            return {
-              id,
-              ...v,
-              attempts,
-              wrongs,
-              correctAnswer: v.correctAnswer || '',
-              wrongRate: attempts > 0 ? wrongs / attempts : 0,
-            };
-          })
-          .filter((v) => v.attempts > 0)
-          .sort((a, b) => {
-            if (b.wrongRate !== a.wrongRate) return b.wrongRate - a.wrongRate;
-            if (b.wrongs !== a.wrongs) return b.wrongs - a.wrongs;
-            return b.attempts - a.attempts;
-          })
-          .slice(0, 20);
-
-        setQuestionStatsList(list);
+        setLeaderboard(list);
       },
       console.error
     );
 
-    return () => offStats();
-  }, [user?.uid, user?.isTeacher, view]);
+    return () => offUsers();
+  }, [user?.uid, view]);
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -615,6 +551,64 @@ function App() {
     };
   }, [user?.uid]);
 
+  useEffect(() => {
+    if (!user?.uid || user?.isTeacher || view !== 'lobby') {
+      setRoomsData({});
+      return;
+    }
+
+    const offRooms = onValue(
+      ref(db, 'rooms'),
+      (snap) => {
+        const val = snap.val() || {};
+        setRoomsData(val);
+      },
+      console.error
+    );
+
+    return () => offRooms();
+  }, [user?.uid, user?.isTeacher, view]);
+
+  useEffect(() => {
+    if (!user?.uid || !user?.isTeacher) {
+      setQuestionStatsList([]);
+      return;
+    }
+
+    const offStats = onValue(
+      ref(db, 'questionStats'),
+      (snap) => {
+        const val = snap.val() || {};
+        const list = Object.entries(val)
+          .map(([id, v]) => {
+            const attempts = v.attempts ?? v.totalCount ?? 0;
+            const wrongs = v.wrongs ?? v.wrongCount ?? 0;
+
+            return {
+              id,
+              ...v,
+              attempts,
+              wrongs,
+              correctAnswer: v.correctAnswer || '',
+              wrongRate: attempts > 0 ? wrongs / attempts : 0,
+            };
+          })
+          .filter((v) => v.attempts > 0)
+          .sort((a, b) => {
+            if (b.wrongRate !== a.wrongRate) return b.wrongRate - a.wrongRate;
+            if (b.wrongs !== a.wrongs) return b.wrongs - a.wrongs;
+            return b.attempts - a.attempts;
+          })
+          .slice(0, 20);
+
+        setQuestionStatsList(list);
+      },
+      console.error
+    );
+
+    return () => offStats();
+  }, [user?.uid, user?.isTeacher]);
+
   const handleLogin = async () => {
     const student = STUDENTS.find((s) => s.id === loginId);
 
@@ -661,10 +655,7 @@ function App() {
       }
 
       resetGameState();
-      setUser({
-        uid,
-        ...finalUserData,
-      });
+      setUser({ uid, ...finalUserData });
       setView('lobby');
     } catch (err) {
       console.error(err);
@@ -682,7 +673,8 @@ function App() {
     const tid = `AI_${user.studentId}_${Date.now()}`;
     const shuffled = shuffleQuestions(allQuestions);
     const now = Date.now();
-    const aiRoom = {
+
+    await dbSet(`rooms/${tid}`, {
       roomType: 'ai',
       p1: user.name,
       p1Uid: user.uid,
@@ -700,16 +692,19 @@ function App() {
       lastActive: now,
       rewardClaimed: {},
       presence: {},
-    };
-
-    await dbSet(`rooms/${tid}`, aiRoom).catch(console.error);
+    }).catch(console.error);
 
     await dbUpdate(`users/${user.uid}`, { hp: increment(-4) }).catch(console.error);
 
-    setRoomData(aiRoom);
+    setQuestions(shuffled);
     setMyRole('p1');
     setRoomId(tid);
     setIsAiMode(true);
+    setP2Joined(true);
+    setP1Name(user.name);
+    setP1Id(user.studentId);
+    setP2Name('🤖 練習用 AI');
+    setP2Id('ai');
     setView('game');
   };
 
@@ -832,10 +827,11 @@ function App() {
 
     await dbUpdate(`users/${user.uid}`, { hp: increment(-2) }).catch(console.error);
 
-    setRoomData(finalRoom);
     setMyRole(role);
     setRoomId(tid);
+    setQuestions(finalRoom.roomQuestions || []);
     setIsAiMode(false);
+    setP2Joined(!!finalRoom.p2Uid);
     setView('game');
   };
 
@@ -870,6 +866,24 @@ function App() {
 
         setRoomData(data);
         setMyRole(roleFromDb);
+        setP1Name(data.p1 || '');
+        setP1Id(data.p1Id || '');
+        setP2Name(data.p2 || '等待中...');
+        setP2Id(data.p2Id || '');
+        setP2Joined(!!data.p2Uid);
+        setSelections(data.selections || null);
+        setCurrentIdx(data.currentIdx || 0);
+        setQuestionEndsAt(data.questionEndsAt || 0);
+        setGameOver(!!data.gameOver);
+
+        if (data.scores) {
+          setP1Score(data.scores.p1 || 0);
+          setP2Score(data.scores.p2 || 0);
+        }
+
+        if (data.roomQuestions) {
+          setQuestions(data.roomQuestions);
+        }
 
         if (data.gameOver && !gameOverPlayedRef.current) {
           const myFinal = roleFromDb === 'p1' ? data.scores?.p1 || 0 : data.scores?.p2 || 0;
@@ -923,20 +937,20 @@ function App() {
   }, [roomId, user?.uid, view, isAiMode]);
 
   useEffect(() => {
-    if (!roomQuestionEndsAt || roomGameOver || (!roomP2Joined && !isAiMode)) {
+    if (!questionEndsAt || gameOver || (!p2Joined && !isAiMode)) {
       setTimeLeft(QUESTION_TIME);
       return;
     }
 
     const tick = () => {
-      const left = Math.max(0, Math.ceil((roomQuestionEndsAt - Date.now()) / 1000));
+      const left = Math.max(0, Math.ceil((questionEndsAt - Date.now()) / 1000));
       setTimeLeft(left);
     };
 
     tick();
     const timer = setInterval(tick, 250);
     return () => clearInterval(timer);
-  }, [roomQuestionEndsAt, roomGameOver, roomP2Joined, isAiMode]);
+  }, [questionEndsAt, gameOver, p2Joined, isAiMode]);
 
   const advanceToNextQuestion = useCallback(
     async (expectedIdx) => {
@@ -1013,7 +1027,7 @@ function App() {
       clearTimeout(advanceTimerRef.current);
       advanceTimerRef.current = null;
     }
-  }, [roomCurrentIdx, roomId]);
+  }, [currentIdx, roomId]);
 
   useEffect(() => {
     if (!roomId || myRole === 'viewer' || !roomData || roomGameOver) return;
@@ -1139,9 +1153,9 @@ function App() {
 
   const onSelect = async (opt) => {
     if (!roomId || !user?.uid) return;
-    if (roomGameOver) return;
-    if (!roomP2Joined && !isAiMode) return;
-    if (roomSelections?.[myRole]) return;
+    if (gameOver) return;
+    if (!p2Joined && !isAiMode) return;
+    if (selections?.[myRole]) return;
 
     if (opt.isCorrect) {
       correctSfx.current.currentTime = 0;
@@ -1161,10 +1175,7 @@ function App() {
       if (room.selections?.[role]) return room;
       if (Date.now() > (room.questionEndsAt || 0)) return room;
 
-      const left = Math.max(
-        0,
-        Math.ceil(((room.questionEndsAt || 0) - Date.now()) / 1000)
-      );
+      const left = Math.max(0, Math.ceil(((room.questionEndsAt || 0) - Date.now()) / 1000));
 
       const gained = opt.isCorrect
         ? (left >= 13 ? 20 : 10) + Math.floor(left * 0.5)
@@ -1188,7 +1199,7 @@ function App() {
     }).catch(console.error);
 
     if (result?.committed) {
-      await recordQuestionStat(roomQuestions[roomCurrentIdx], !!opt.isCorrect).catch(console.error);
+      await recordQuestionStat(questions[currentIdx], !!opt.isCorrect).catch(console.error);
     }
   };
 
@@ -1196,8 +1207,8 @@ function App() {
     if (!user?.uid || rewardClaimingRef.current) return;
     rewardClaimingRef.current = true;
 
-    const myScore = myRole === 'p1' ? roomP1Score : roomP2Score;
-    const oppScore = myRole === 'p1' ? roomP2Score : roomP1Score;
+    const myScore = myRole === 'p1' ? p1Score : p2Score;
+    const oppScore = myRole === 'p1' ? p2Score : p1Score;
     const isWin = myScore > oppScore;
 
     let rewardPoints = 0;
@@ -1240,19 +1251,9 @@ function App() {
   };
 
   const renderMessageBoard = (compact = false) => (
-    <div
-      className="box"
-      style={{
-        marginTop: compact ? '12px' : 0,
-      }}
-    >
+    <div className="box" style={{ marginTop: compact ? '12px' : 0 }}>
       <h4 style={{ marginTop: 0 }}>💬 留言板 (最新在上方)</h4>
-      <div
-        className="msg-box"
-        style={{
-          height: compact ? '220px' : '300px',
-        }}
-      >
+      <div className="msg-box" style={{ height: compact ? '220px' : '300px' }}>
         {messages
           .slice()
           .reverse()
@@ -1307,11 +1308,7 @@ function App() {
   );
 
   if (loading) {
-    return (
-      <div style={{ color: 'white', textAlign: 'center', marginTop: '50px' }}>
-        載入中...
-      </div>
-    );
+    return <div style={{ color: 'white', textAlign: 'center', marginTop: '50px' }}>載入中...</div>;
   }
 
   return (
@@ -1726,11 +1723,10 @@ function App() {
                 <div className="box">
                   <h3 style={{ color: '#ffeb3b', textAlign: 'center', marginTop: 0 }}>🏆 榮譽榜</h3>
                   <div style={{ overflowX: 'auto', width: '100%' }}>
-                    <table className="rank-table" style={{ minWidth: '620px' }}>
+                    <table className="rank-table" style={{ minWidth: '560px' }}>
                       <thead>
                         <tr>
                           <th>#</th>
-                          <th>狀態</th>
                           <th>頭像</th>
                           <th>姓名</th>
                           <th>積分</th>
@@ -1744,27 +1740,27 @@ function App() {
                           <tr key={u.uid}>
                             <td>{i + 1}</td>
                             <td>
-                              <span
-                                title={u.online ? '上線中' : '離線'}
-                                style={{
-                                  display: 'inline-block',
-                                  width: '10px',
-                                  height: '10px',
-                                  borderRadius: '50%',
-                                  background: u.online ? '#4caf50' : '#666',
-                                  boxShadow: u.online ? '0 0 8px rgba(76,175,80,0.8)' : 'none',
-                                }}
-                              />
-                            </td>
-                            <td>
-                              <img
-                                src={avatarSrc(u.studentId)}
-                                className="avatar"
-                                alt=""
-                                onError={(e) => {
-                                  e.target.src = 'https://via.placeholder.com/40';
-                                }}
-                              />
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <img
+                                  src={avatarSrc(u.studentId)}
+                                  className="avatar"
+                                  alt=""
+                                  onError={(e) => {
+                                    e.target.src = 'https://via.placeholder.com/40';
+                                  }}
+                                />
+                                <span
+                                  title={u.online ? '上線中' : '離線'}
+                                  style={{
+                                    width: '10px',
+                                    height: '10px',
+                                    borderRadius: '50%',
+                                    background: u.online ? '#4caf50' : '#666',
+                                    boxShadow: u.online ? '0 0 8px rgba(76,175,80,0.8)' : 'none',
+                                    flexShrink: 0,
+                                  }}
+                                />
+                              </div>
                             </td>
                             <td>{u.name}</td>
                             <td style={{ color: '#4caf50' }}>{u.totalScore}</td>
@@ -1887,49 +1883,49 @@ function App() {
                   >
                     <div style={{ minWidth: 100 }}>
                       <img
-                        src={avatarSrc(roomP1Id, 80)}
+                        src={avatarSrc(p1Id, 80)}
                         className="avatar-lg"
                         alt=""
                         onError={(e) => {
                           e.target.src = 'https://via.placeholder.com/80';
                         }}
                       />
-                      <div style={{ fontSize: '1.5rem', color: '#4caf50' }}>{roomP1Score}</div>
-                      <small style={{ wordBreak: 'break-word' }}>{roomP1Name}</small>
+                      <div style={{ fontSize: '1.5rem', color: '#4caf50' }}>{p1Score}</div>
+                      <small style={{ wordBreak: 'break-word' }}>{p1Name}</small>
                     </div>
                     <div style={{ fontSize: '2rem' }}>VS</div>
                     <div style={{ minWidth: 100 }}>
                       <img
-                        src={avatarSrc(roomP2Id, 80)}
+                        src={avatarSrc(p2Id, 80)}
                         className="avatar-lg"
                         alt=""
                         onError={(e) => {
                           e.target.src = 'https://via.placeholder.com/80';
                         }}
                       />
-                      <div style={{ fontSize: '1.5rem', color: '#2196f3' }}>{roomP2Score}</div>
-                      <small style={{ wordBreak: 'break-word' }}>{roomP2Name}</small>
+                      <div style={{ fontSize: '1.5rem', color: '#2196f3' }}>{p2Score}</div>
+                      <small style={{ wordBreak: 'break-word' }}>{p2Name}</small>
                     </div>
                   </div>
                 </div>
 
-                {(roomP2Joined || isAiMode) ? (
-                  roomQuestions[roomCurrentIdx] && (
+                {(p2Joined || isAiMode) ? (
+                  questions[currentIdx] && (
                     <div className="box">
                       <div style={{ fontSize: '1.2rem', marginBottom: '15px', wordBreak: 'break-word' }}>
-                        Q{roomCurrentIdx + 1}: {roomQuestions[roomCurrentIdx].question}
+                        Q{currentIdx + 1}: {questions[currentIdx].question}
                       </div>
-                      {roomQuestions[roomCurrentIdx].options.map((opt, i) => (
+                      {questions[currentIdx].options.map((opt, i) => (
                         <button
                           key={i}
                           onClick={() => onSelect(opt)}
-                          disabled={!!roomSelections?.[myRole] || roomGameOver}
+                          disabled={!!selections?.[myRole] || gameOver}
                           className="option-btn"
                           style={{
-                            background: roomSelections?.[myRole]
+                            background: selections?.[myRole]
                               ? opt.isCorrect
                                 ? '#2e7d32'
-                                : roomSelections[myRole].text === opt.text
+                                : selections[myRole].text === opt.text
                                   ? '#c62828'
                                   : '#333'
                               : '#333',
@@ -1951,7 +1947,7 @@ function App() {
             )}
           </main>
 
-          {roomGameOver && (
+          {gameOver && (
             <div
               style={{
                 position: 'fixed',
@@ -1971,15 +1967,15 @@ function App() {
                 style={{
                   fontSize: 'clamp(2.2rem, 10vw, 4rem)',
                   color:
-                    (myRole === 'p1' ? roomP1Score : roomP2Score) >
-                    (myRole === 'p1' ? roomP2Score : roomP1Score)
+                    (myRole === 'p1' ? p1Score : p2Score) >
+                    (myRole === 'p1' ? p2Score : p1Score)
                       ? '#ffeb3b'
                       : '#ff5252',
                   marginBottom: '20px',
                 }}
               >
-                {(myRole === 'p1' ? roomP1Score : roomP2Score) >
-                (myRole === 'p1' ? roomP2Score : roomP1Score)
+                {(myRole === 'p1' ? p1Score : p2Score) >
+                (myRole === 'p1' ? p2Score : p1Score)
                   ? 'VICTORY! 🎉'
                   : 'DEFEAT... 💀'}
               </h1>
