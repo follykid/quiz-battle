@@ -247,7 +247,7 @@ function App() {
     const correctAnswer =
       questionObj.options?.find((o) => o.isCorrect)?.text || '';
 
-    await dbTx(`questionStats/${key}`, (stat) => {
+    await dbTx(`stats/${key}`, (stat) => {
       const current = stat || {
         question: questionObj.question,
         correctAnswer,
@@ -522,7 +522,7 @@ function App() {
     }
 
     const offStats = onValue(
-      ref(db, 'questionStats'),
+      ref(db, 'stats'),
       (snap) => {
         const val = snap.val() || {};
         const list = Object.entries(val)
