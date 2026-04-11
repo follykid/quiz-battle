@@ -253,20 +253,26 @@ function App() {
         correctAnswer,
         attempts: 0,
         wrongs: 0,
+        count: 0,
+        wrong: 0,
         updatedAt: 0,
       };
 
-      const prevAttempts = current.attempts ?? current.totalCount ?? 0;
-      const prevWrongs = current.wrongs ?? current.wrongCount ?? 0;
+      const prevAttempts = current.attempts ?? current.totalCount ?? current.count ?? 0;
+      const prevWrongs = current.wrongs ?? current.wrongCount ?? current.wrong ?? 0;
+      const nextAttempts = prevAttempts + 1;
+      const nextWrongs = prevWrongs + (isCorrect ? 0 : 1);
 
       return {
         ...current,
         question: questionObj.question,
         correctAnswer: current.correctAnswer || correctAnswer,
-        attempts: prevAttempts + 1,
-        wrongs: prevWrongs + (isCorrect ? 0 : 1),
-        totalCount: prevAttempts + 1,
-        wrongCount: prevWrongs + (isCorrect ? 0 : 1),
+        attempts: nextAttempts,
+        wrongs: nextWrongs,
+        totalCount: nextAttempts,
+        wrongCount: nextWrongs,
+        count: nextAttempts,
+        wrong: nextWrongs,
         updatedAt: Date.now(),
       };
     });
@@ -527,15 +533,16 @@ function App() {
         const val = snap.val() || {};
         const list = Object.entries(val)
           .map(([id, v]) => {
-            const attempts = v.attempts ?? v.totalCount ?? 0;
-            const wrongs = v.wrongs ?? v.wrongCount ?? 0;
+            const attempts = v.attempts ?? v.totalCount ?? v.count ?? 0;
+            const wrongs = v.wrongs ?? v.wrongCount ?? v.wrong ?? 0;
 
             return {
               id,
               ...v,
+              question: v.question || id,
               attempts,
               wrongs,
-              correctAnswer: v.correctAnswer || '',
+              correctAnswer: v.correctAnswer || '-',
               wrongRate: attempts > 0 ? wrongs / attempts : 0,
             };
           })
