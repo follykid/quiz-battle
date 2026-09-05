@@ -97,7 +97,11 @@ function App() {
     (studentId, size = 40) => {
       if (!studentId) return `https://via.placeholder.com/${size}`;
       if (studentId === 'ai') return AI_AVATAR_SRC;
-      return `${BASE}avatars/${String(studentId).trim()}.jpg`;
+      if (studentId === 'teacher') return `${BASE}avatars/teacher.jpg`;
+      const student = STUDENTS.find((s) => String(s.id).trim() === String(studentId).trim());
+      if (!student) return `https://via.placeholder.com/${size}`;
+      const seat = String(student.seat).padStart(2, '0');
+      return `${BASE}avatars/${seat}.jpg`;
     },
     [BASE]
   );

@@ -14,3 +14,7 @@ The React Compiler is not enabled on this template because of its impact on dev 
 ## Expanding the ESLint configuration
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+
+
+## 本版本學生資料
+本版本只保留積分系統目前 26 位學生，學生登入帳號使用積分系統學號，頭像依積分系統座號 01～26 對應。Firebase Authentication 帳號仍需在 Firebase 專案中建立後，學生才能實際登入。
