@@ -97,7 +97,11 @@ function App() {
     (studentId, size = 40) => {
       if (!studentId) return `https://via.placeholder.com/${size}`;
       if (studentId === 'ai') return AI_AVATAR_SRC;
-      return `${BASE}avatars/${String(studentId).trim()}.jpg`;
+      if (studentId === 'teacher') return `${BASE}avatars/teacher.jpg`;
+      const student = STUDENTS.find((s) => String(s.id).trim() === String(studentId).trim());
+      if (!student) return `https://via.placeholder.com/${size}`;
+      const seat = String(student.seat).padStart(2, '0');
+      return `${BASE}avatars/${seat}.jpg`;
     },
     [BASE]
   );
@@ -466,7 +470,7 @@ function App() {
   }, [user?.uid]);
 
   useEffect(() => {
-    if (!user?.uid || view !== 'lobby') {
+    if (!user?.uid || view !== 'lobby' || user?.isTeacher) {
       setLeaderboard([]);
       return;
     }
@@ -475,38 +479,8 @@ function App() {
       ref(db, 'users'),
       (snap) => {
         const val = snap.val() || {};
-        const usersByStudentId = {};
-
-        // 只保留目前26位學生＋老師測試帳號，舊學生不列入榮譽榜。
-        Object.entries(val).forEach(([uid, v]) => {
-          if (!v?.studentId) return;
-
-          const student = STUDENTS.find(
-            (s) => String(s.id) === String(v.studentId)
-          );
-          if (!student) return;
-
-          usersByStudentId[student.id] = {
-            uid,
-            ...v,
-            studentId: student.id,
-            name: student.name,
-          };
-        });
-
-        // 以目前26位學生＋老師名單為基準；尚未登入者也顯示，積分預設為0。
-        const list = STUDENTS
-          .map((student) => usersByStudentId[student.id] || {
-            uid: `student-${student.id}`,
-            studentId: student.id,
-            name: student.name,
-            totalScore: 0,
-            hp: 20,
-            wins: 0,
-            losses: 0,
-            online: false,
-            isTeacher: student.id === 'teacher',
-          })
+        const list = Object.entries(val)
+          .map(([uid, v]) => ({ uid, ...v }))
           .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
 
         setLeaderboard(list);
