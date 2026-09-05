@@ -3,7 +3,6 @@ import Papa from 'papaparse';
 import { db, auth } from './firebase';
 import {
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
 } from 'firebase/auth';
@@ -98,11 +97,7 @@ function App() {
     (studentId, size = 40) => {
       if (!studentId) return `https://via.placeholder.com/${size}`;
       if (studentId === 'ai') return AI_AVATAR_SRC;
-      if (studentId === 'teacher') return `${BASE}avatars/teacher.jpg`;
-      const student = STUDENTS.find((s) => String(s.id).trim() === String(studentId).trim());
-      if (!student) return `https://via.placeholder.com/${size}`;
-      const seat = String(student.seat).padStart(2, '0');
-      return `${BASE}avatars/${seat}.jpg`;
+      return `${BASE}avatars/${String(studentId).trim()}.jpg`;
     },
     [BASE]
   );
@@ -471,7 +466,7 @@ function App() {
   }, [user?.uid]);
 
   useEffect(() => {
-    if (!user?.uid || view !== 'lobby' || user?.isTeacher) {
+    if (!user?.uid || view !== 'lobby') {
       setLeaderboard([]);
       return;
     }
@@ -480,8 +475,38 @@ function App() {
       ref(db, 'users'),
       (snap) => {
         const val = snap.val() || {};
-        const list = Object.entries(val)
-          .map(([uid, v]) => ({ uid, ...v }))
+        const usersByStudentId = {};
+
+        // 只保留目前26位學生＋老師測試帳號，舊學生不列入榮譽榜。
+        Object.entries(val).forEach(([uid, v]) => {
+          if (!v?.studentId) return;
+
+          const student = STUDENTS.find(
+            (s) => String(s.id) === String(v.studentId)
+          );
+          if (!student) return;
+
+          usersByStudentId[student.id] = {
+            uid,
+            ...v,
+            studentId: student.id,
+            name: student.name,
+          };
+        });
+
+        // 以目前26位學生＋老師名單為基準；尚未登入者也顯示，積分預設為0。
+        const list = STUDENTS
+          .map((student) => usersByStudentId[student.id] || {
+            uid: `student-${student.id}`,
+            studentId: student.id,
+            name: student.name,
+            totalScore: 0,
+            hp: 20,
+            wins: 0,
+            losses: 0,
+            online: false,
+            isTeacher: student.id === 'teacher',
+          })
           .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
 
         setLeaderboard(list);
@@ -625,33 +650,10 @@ function App() {
       return;
     }
 
-    if (loginPwd !== student.password) {
-      alert('學號或密碼錯誤！');
-      return;
-    }
-
     const email = `${loginId}@${AUTH_EMAIL_DOMAIN}`;
 
-    // Firebase Authentication requires passwords to be at least 6 characters.
-    // Students still enter the original 4-digit class password; this longer
-    // value is used only inside Firebase. The roster password is checked above.
-    const firebasePassword = student.id === 'teacher'
-      ? loginPwd
-      : `KnowledgeKing-${student.password}`;
-
     try {
-      let cred;
-      try {
-        // Try to provision the Firebase account automatically. If it already
-        // exists, Firebase returns auth/email-already-in-use and we simply log in.
-        cred = await createUserWithEmailAndPassword(auth, email, firebasePassword);
-      } catch (createErr) {
-        if (createErr?.code === 'auth/email-already-in-use') {
-          cred = await signInWithEmailAndPassword(auth, email, firebasePassword);
-        } else {
-          throw createErr;
-        }
-      }
+      const cred = await signInWithEmailAndPassword(auth, email, loginPwd);
       const uid = cred.user.uid;
       const userRef = ref(db, `users/${uid}`);
       const snap = await get(userRef);
