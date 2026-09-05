@@ -1,8 +1,10 @@
+// FINAL LEADERBOARD PATCH: current 26 students + teacher; legacy users filtered; avatar path unchanged.
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Papa from 'papaparse';
 import { db, auth } from './firebase';
 import {
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
 } from 'firebase/auth';
@@ -75,6 +77,7 @@ function App() {
   const rewardClaimingRef = useRef(false);
   const advanceTimerRef = useRef(null);
   const advanceLockRef = useRef('');
+  const leaderboardSignatureRef = useRef('');
 
   const BASE = import.meta.env.BASE_URL;
 
@@ -470,8 +473,7 @@ function App() {
   }, [user?.uid]);
 
   useEffect(() => {
-    if (!user?.uid || view !== 'lobby' || user?.isTeacher) {
-      setLeaderboard([]);
+    if (!user?.uid || view !== 'lobby') {
       return;
     }
 
@@ -479,17 +481,79 @@ function App() {
       ref(db, 'users'),
       (snap) => {
         const val = snap.val() || {};
-        const list = Object.entries(val)
-          .map(([uid, v]) => ({ uid, ...v }))
-          .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
+        const usersByStudentId = {};
 
-        setLeaderboard(list);
+        // 只接受目前 students.js 裡的 26 位學生＋老師。
+        // Firebase 裡舊的 109xxx 帳號保留，但不列入榮譽榜。
+        Object.entries(val).forEach(([uid, v]) => {
+          const studentId = String(v?.studentId || '').trim();
+          if (!studentId) return;
+
+          const student = STUDENTS.find(
+            (s) => String(s.id).trim() === studentId
+          );
+          if (!student) return;
+
+          usersByStudentId[student.id] = {
+            uid,
+            studentId: student.id,
+            name: student.name,
+            totalScore: Number(v?.totalScore || 0),
+            hp: Number(v?.hp ?? 20),
+            wins: Number(v?.wins || 0),
+            losses: Number(v?.losses || 0),
+            online: !!v?.online,
+            isTeacher: student.id === 'teacher',
+          };
+        });
+
+        // 固定以目前 26 位學生＋老師為榜單名單。
+        // 尚未登入者也顯示，積分預設 0。
+        const list = STUDENTS.map((student) => {
+          return usersByStudentId[student.id] || {
+            uid: `student-${student.id}`,
+            studentId: student.id,
+            name: student.name,
+            totalScore: 0,
+            hp: 20,
+            wins: 0,
+            losses: 0,
+            online: false,
+            isTeacher: student.id === 'teacher',
+          };
+        }).sort((a, b) => {
+          if ((b.totalScore || 0) !== (a.totalScore || 0)) {
+            return (b.totalScore || 0) - (a.totalScore || 0);
+          }
+          return String(a.studentId).localeCompare(String(b.studentId));
+        });
+
+        // 只有真正影響榜單的資料改變才更新 state。
+        // lastSeen 等 Firebase 背景更新不會讓整張榜單重新建立，避免閃爍。
+        const signature = JSON.stringify(
+          list.map((item) => ({
+            studentId: item.studentId,
+            uid: item.uid,
+            name: item.name,
+            totalScore: item.totalScore || 0,
+            wins: item.wins || 0,
+            losses: item.losses || 0,
+            hp: item.hp || 20,
+          }))
+        );
+
+        if (leaderboardSignatureRef.current !== signature) {
+          leaderboardSignatureRef.current = signature;
+          setLeaderboard(list);
+        }
       },
       console.error
     );
 
-    return () => offUsers();
-  }, [user?.uid, user?.isTeacher, view]);
+    return () => {
+      offUsers();
+    };
+  }, [user?.uid, view]);
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -624,10 +688,33 @@ function App() {
       return;
     }
 
+    if (loginPwd !== student.password) {
+      alert('學號或密碼錯誤！');
+      return;
+    }
+
     const email = `${loginId}@${AUTH_EMAIL_DOMAIN}`;
 
+    // Firebase Authentication requires passwords to be at least 6 characters.
+    // Students still enter the original 4-digit class password; this longer
+    // value is used only inside Firebase. The roster password is checked above.
+    const firebasePassword = student.id === 'teacher'
+      ? loginPwd
+      : `KnowledgeKing-${student.password}`;
+
     try {
-      const cred = await signInWithEmailAndPassword(auth, email, loginPwd);
+      let cred;
+      try {
+        // Try to provision the Firebase account automatically. If it already
+        // exists, Firebase returns auth/email-already-in-use and we simply log in.
+        cred = await createUserWithEmailAndPassword(auth, email, firebasePassword);
+      } catch (createErr) {
+        if (createErr?.code === 'auth/email-already-in-use') {
+          cred = await signInWithEmailAndPassword(auth, email, firebasePassword);
+        } else {
+          throw createErr;
+        }
+      }
       const uid = cred.user.uid;
       const userRef = ref(db, `users/${uid}`);
       const snap = await get(userRef);
@@ -1748,7 +1835,7 @@ function App() {
               </div>
             )}
 
-            {view === 'lobby' && !user?.isTeacher && (
+            {view === 'lobby' && (
               <div className="lobby-layout">
                 <div className="box">
                   <h3 style={{ color: '#ffeb3b', textAlign: 'center', marginTop: 0 }}>🏆 榮譽榜</h3>
