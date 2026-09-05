@@ -3,6 +3,7 @@ import Papa from 'papaparse';
 import { db, auth } from './firebase';
 import {
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
 } from 'firebase/auth';
@@ -624,10 +625,33 @@ function App() {
       return;
     }
 
+    if (loginPwd !== student.password) {
+      alert('學號或密碼錯誤！');
+      return;
+    }
+
     const email = `${loginId}@${AUTH_EMAIL_DOMAIN}`;
 
+    // Firebase Authentication requires passwords to be at least 6 characters.
+    // Students still enter the original 4-digit class password; this longer
+    // value is used only inside Firebase. The roster password is checked above.
+    const firebasePassword = student.id === 'teacher'
+      ? loginPwd
+      : `KnowledgeKing-${student.password}`;
+
     try {
-      const cred = await signInWithEmailAndPassword(auth, email, loginPwd);
+      let cred;
+      try {
+        // Try to provision the Firebase account automatically. If it already
+        // exists, Firebase returns auth/email-already-in-use and we simply log in.
+        cred = await createUserWithEmailAndPassword(auth, email, firebasePassword);
+      } catch (createErr) {
+        if (createErr?.code === 'auth/email-already-in-use') {
+          cred = await signInWithEmailAndPassword(auth, email, firebasePassword);
+        } else {
+          throw createErr;
+        }
+      }
       const uid = cred.user.uid;
       const userRef = ref(db, `users/${uid}`);
       const snap = await get(userRef);
