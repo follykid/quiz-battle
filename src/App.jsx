@@ -77,6 +77,7 @@ function App() {
   const rewardClaimingRef = useRef(false);
   const advanceTimerRef = useRef(null);
   const advanceLockRef = useRef('');
+  const leaderboardSignatureRef = useRef('');
 
   const BASE = import.meta.env.BASE_URL;
 
@@ -478,6 +479,7 @@ function App() {
   useEffect(() => {
     if (!user?.uid || view !== 'lobby' || user?.isTeacher) {
       setLeaderboard([]);
+      leaderboardSignatureRef.current = '';
       return;
     }
 
@@ -485,11 +487,73 @@ function App() {
       ref(db, 'users'),
       (snap) => {
         const val = snap.val() || {};
-        const list = Object.entries(val)
-          .map(([uid, v]) => ({ uid, ...v }))
-          .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
+        const usersByStudentId = {};
 
-        setLeaderboard(list);
+        // 只允許目前 students.js 的名單進入榮譽榜，
+        // 過去 Firebase 留下的舊帳號一律忽略。
+        Object.entries(val).forEach(([uid, v]) => {
+          const studentId = String(v?.studentId || '').trim();
+          if (!studentId) return;
+
+          const student = STUDENTS.find(
+            (s) => String(s.id).trim() === studentId
+          );
+          if (!student) return;
+
+          usersByStudentId[student.id] = {
+            uid,
+            studentId: student.id,
+            name: student.name,
+            totalScore: Number(v?.totalScore || 0),
+            hp: Number(v?.hp ?? 20),
+            wins: Number(v?.wins || 0),
+            losses: Number(v?.losses || 0),
+            online: !!v?.online,
+            isTeacher: student.id === 'teacher',
+          };
+        });
+
+        // 固定以目前 26 位學生 + teacher01 為榜單名單，
+        // 尚未登入/尚無 Firebase 資料者仍顯示 0 分。
+        const list = STUDENTS
+          .filter((student) => student.id !== 'teacher')
+          .map((student) => usersByStudentId[student.id] || {
+            uid: `student-${student.id}`,
+            studentId: student.id,
+            name: student.name,
+            totalScore: 0,
+            hp: 20,
+            wins: 0,
+            losses: 0,
+            online: false,
+            isTeacher: false,
+          })
+          .sort((a, b) => {
+            if ((b.totalScore || 0) !== (a.totalScore || 0)) {
+              return (b.totalScore || 0) - (a.totalScore || 0);
+            }
+            return String(a.studentId).localeCompare(String(b.studentId));
+          });
+
+        // Firebase 每 15 秒會更新 online/lastSeen；
+        // 只有真正影響榜單顯示的資料改變時才重新 render，避免閃爍。
+        const signature = JSON.stringify(
+          list.map((item) => ({
+            studentId: item.studentId,
+            uid: item.uid,
+            name: item.name,
+            totalScore: item.totalScore || 0,
+            wins: item.wins || 0,
+            losses: item.losses || 0,
+            hp: item.hp || 20,
+            online: !!item.online,
+          }))
+        );
+
+        if (leaderboardSignatureRef.current !== signature) {
+          leaderboardSignatureRef.current = signature;
+          setLeaderboard(list);
+        }
       },
       console.error
     );
