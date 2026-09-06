@@ -28,7 +28,8 @@ export const STUDENTS = [
     { id: "111057", name: "芯妤", password: "0402", seat: 24 },
     { id: "111147", name: "毓琳", password: "0520", seat: 25 },
     { id: "111150", name: "予甯", password: "0710", seat: 26 },
-    { id: "teacher", name: "老師", password: "1930", seat: 0 }
+    { id: "teacher", name: "老師", password: "1930", seat: 0 },
+    { id: "teacher01", name: "小明", password: "1930", seat: 0 }
 ];
 
 // 預設建立 15 間房間
