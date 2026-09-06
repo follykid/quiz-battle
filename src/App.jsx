@@ -698,9 +698,10 @@ function App() {
     // Firebase Authentication requires passwords to be at least 6 characters.
     // Students still enter the original 4-digit class password; this longer
     // value is used only inside Firebase. The roster password is checked above.
-    const firebasePassword = student.id === 'teacher'
-      ? loginPwd
-      : `KnowledgeKing-${student.password}`;
+    // Firebase Authentication requires at least 6 characters.
+    // Keep the teacher's visible/test password as 1930, but use a private
+    // Firebase password internally, just like the student accounts.
+    const firebasePassword = `KnowledgeKing-${student.password}`;
 
     try {
       let cred;
